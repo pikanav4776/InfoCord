@@ -1,0 +1,39 @@
+/* Exercise R1 — ROW_NUMBER()
+For every member, assign a unique row number ordered by their join date (oldest first). 
+Then in an outer query, return only the members who joined in positions 5 through 15. 
+You may not use LIMIT or OFFSET — the row number is your only filter mechanism.*/
+with R1 as (
+	select
+		member_id,
+		full_name,
+		email,
+		phone,
+		join_date,
+		membership_tier,
+		is_active,
+		date_of_birth,
+		row_number() over(partition by join_date order by join_date asc) as row_num
+	from gymnasium.members
+)
+select *
+from R1
+where row_num >= 5 and row_num <= 15;
+select * from gymnasium.members me join gymnasium.payments pa on me.member_id = pa.member_id;
+
+/*
+Exercise R5 — NTILE() anomaly awareness
+Using NTILE(3) on your members ordered by join date, find any bucket that has a different member count than the others. 
+Write a comment explaining why this happens and under what exact condition NTILE produces unequal buckets.
+*/
+with R5 as(
+	select *,
+		NTILE(3) over (partition by member_id order by join_date)
+	from R1
+)
+select count(*) from R5;
+
+R5 broken down
+The exercise has three distinct steps:
+Step 1 — Assign every member to one of 3 buckets using NTILE(3), ordered by join date. This is just a SELECT with a window function, nothing more.
+Step 2 — Count how many members landed in each bucket. This means wrapping step 1 in a CTE, then in the outer query doing a COUNT grouped by the bucket number. Your output should be three rows — bucket 1, bucket 2, bucket 3 — each with a member count next to it.
+Step 3 — Write a SQL comment (just -- lines, no code) explaining two things: why some buckets might have a different count than others, and the exact mathematical condition under which this happens. Think about what happens when your total row count does not divide evenly by 3.
