@@ -1,1 +1,10 @@
+Flask
+Flask-SQLAlchemy
+Flask-Migrate
+Flask-Limiter
+python-dotenv
+cryptography
 gunicorn
+psycopg2-binary
+Werkzeug
+SQLAlchemy
