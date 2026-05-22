@@ -14,7 +14,6 @@ from flask_limiter.util import get_remote_address
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from dotenv import load_dotenv
-from crypto_utils import encrypt_note, decrypt_note
 
 load_dotenv()
 
@@ -24,24 +23,21 @@ DB_password      = os.getenv("DB_password")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
 DATABASE_URL     = os.getenv("DATABASE_URL")
 
-MAX_NOTE_LENGTH    = 10000
-MAX_CATEGORY_NAME  = 120
+MAX_NOTE_LENGTH           = 10000
+MAX_CATEGORY_NAME         = 120
 MAX_FAILED_ATTEMPTS       = 5
 LOCKOUT_DURATION_MINUTES  = 15
 
 app = Flask(__name__)
 
 app.config['SECRET_KEY']                  = FLASK_SECRET_KEY
-app.config['SQLALCHEMY_DATABASE_URI']     = os.getenv(
-    'TEST_DATABASE_URI',
-    f'postgresql+psycopg2://{DB_username}:{DB_password}@localhost:{DB_PORT}/infocord_mvp'
-)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SESSION_COOKIE_HTTPONLY']     = True
 app.config['SESSION_COOKIE_SECURE']       = os.getenv("FLASK_ENV") == "production"
 app.config['SESSION_COOKIE_SAMESITE']     = 'Lax'
 app.config['PERMANENT_SESSION_LIFETIME']  = timedelta(days=7)
-app.config["RATELIMIT_ENABLED"] = os.getenv("FLASK_ENV") != "production"
+app.config["RATELIMIT_ENABLED"]           = os.getenv("FLASK_ENV") == "production"
+
 
 def normalize_db_url(url: str) -> str:
     if url and url.startswith("postgres://"):
@@ -50,18 +46,14 @@ def normalize_db_url(url: str) -> str:
         return url.replace("postgresql://", "postgresql+psycopg2://", 1)
     return url
 
-app.config['DATABASE_URL'] = DATABASE_URL
 
-app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL or \
+app.config['SQLALCHEMY_DATABASE_URI'] = normalize_db_url(DATABASE_URL) or \
     f'postgresql+psycopg2://{DB_username}:{DB_password}@localhost:{DB_PORT}/infocord_mvp'
 
 
 # ─────────────────────────────────────────────
-# LOGGING  (Phase 6)
+# LOGGING
 # ─────────────────────────────────────────────
-# Structured format: timestamp | level | request-id | message
-# request-id is injected per-request so every log line for one HTTP call
-# shares the same ID — makes grep-based tracing trivial.
 
 def _configure_logging() -> None:
     log_level = logging.DEBUG if os.getenv("FLASK_ENV") != "production" else logging.INFO
@@ -76,7 +68,6 @@ def _configure_logging() -> None:
     root.addHandler(handler)
     root.setLevel(log_level)
 
-    # Quiet noisy third-party loggers in production
     if os.getenv("FLASK_ENV") == "production":
         logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
@@ -115,20 +106,18 @@ limiter = Limiter(
 
 
 # ─────────────────────────────────────────────
-# REQUEST LIFECYCLE HOOKS  (Phase 6)
+# REQUEST LIFECYCLE HOOKS
 # ─────────────────────────────────────────────
 
 @app.before_request
 def _before_request() -> None:
-    """Stamp every request with a unique ID and log its arrival."""
-    g.request_id = str(uuid.uuid4())[:8]          # short 8-char prefix is enough
+    g.request_id = str(uuid.uuid4())[:8]
     g.start_time = datetime.now()
     logger.info(f"{request.method} {request.path} — started")
 
 
 @app.after_request
 def _after_request(response):
-    """Log completion with status + elapsed time; attach request-id header."""
     elapsed_ms = int((datetime.now() - g.start_time).total_seconds() * 1000)
     logger.info(
         f"{request.method} {request.path} — "
@@ -139,7 +128,7 @@ def _after_request(response):
 
 
 # ─────────────────────────────────────────────
-# GLOBAL ERROR HANDLERS  (Phase 6)
+# GLOBAL ERROR HANDLERS
 # ─────────────────────────────────────────────
 
 @app.errorhandler(400)
@@ -174,11 +163,6 @@ def internal_error(e):
 
 @app.errorhandler(Exception)
 def unhandled_exception(e):
-    """
-    Catch-all for any exception that slips past route handlers.
-    Rolls back any open DB transaction so the session isn't left dirty,
-    then returns a safe generic 500 — never leaking stack traces to clients.
-    """
     logger.error(f"Unhandled exception on {request.method} {request.path}: {e}", exc_info=True)
     try:
         db.session.rollback()
@@ -207,13 +191,6 @@ def is_valid_hex_color(color: str) -> bool:
 
 
 def parse_uuid(value: str, label: str):
-    """
-    Safely parse a UUID string.  Returns (uuid_obj, None) on success or
-    (None, error_response_tuple) on failure — callers just do:
-
-        obj_id, err = parse_uuid(raw, "note_id")
-        if err: return err
-    """
     try:
         return uuid.UUID(value), None
     except (ValueError, AttributeError):
@@ -238,10 +215,6 @@ def current_user():
 
 
 def db_commit(label: str):
-    """
-    Wraps db.session.commit() with error handling.
-    Returns None on success, or a (response, status) tuple on failure.
-    """
     try:
         db.session.commit()
         return None
@@ -262,10 +235,6 @@ def home():
 
 @app.route("/health")
 def health():
-    """
-    Health-check endpoint for uptime monitors / deployment readiness probes.
-    Also verifies the DB is reachable so a broken connection is surfaced early.
-    """
     try:
         db.session.execute(db.text("SELECT 1"))
         db_status = "ok"
@@ -408,7 +377,7 @@ def create_category():
         return jsonify({"error": "Request body must be JSON"}), 400
 
     name  = data.get("name", "").strip()
-    color = data.get("color", "").strip().upper()
+    color = data.get("color", "").strip().lstrip("#").upper()
 
     if not name or not color:
         return jsonify({"error": "name and color are required"}), 400
@@ -417,7 +386,7 @@ def create_category():
         return jsonify({"error": f"Category name too long (max {MAX_CATEGORY_NAME} characters)"}), 400
 
     if not is_valid_hex_color(color):
-        return jsonify({"error": "color must be a 6-character hex value (e.g. FF0000)"}), 400
+        return jsonify({"error": "color must be a 6-character hex value (e.g. FF0000 or #FF0000)"}), 400
 
     category = Category(user_id=current_user().id, name=name, color=color)
     db.session.add(category)
@@ -463,9 +432,9 @@ def update_category(category_id):
         category.name = name
 
     if "color" in data:
-        color = str(data["color"]).strip().upper()
+        color = str(data["color"]).strip().lstrip("#").upper()
         if not is_valid_hex_color(color):
-            return jsonify({"error": "color must be a 6-character hex value (e.g. FF0000)"}), 400
+            return jsonify({"error": "color must be a 6-character hex value (e.g. FF0000 or #FF0000)"}), 400
         category.color = color
 
     if (err := db_commit("update_category")):
@@ -510,20 +479,26 @@ def create_note():
         return jsonify({"error": "Request body must be JSON"}), 400
 
     category_id = data.get("category_id")
-    content     = data.get("content", "")
+    ciphertext  = data.get("ciphertext", "")
+    iv          = data.get("iv", "")
+    salt        = data.get("salt", "")
+    title       = data.get("title", "")
 
     if not category_id:
         return jsonify({"error": "category_id is required"}), 400
 
+    if not ciphertext or not iv or not salt:
+        return jsonify({"error": "ciphertext, iv, and salt are required"}), 400
+
+    if not isinstance(ciphertext, str):
+        return jsonify({"error": "ciphertext must be a string"}), 400
+
+    if len(ciphertext) > MAX_NOTE_LENGTH * 2:  # ciphertext is larger than plaintext
+        return jsonify({"error": "Note content too large"}), 400
+
     cat_uuid, err = parse_uuid(category_id, "category_id")
     if err:
         return err
-
-    if not isinstance(content, str):
-        return jsonify({"error": "content must be a string"}), 400
-
-    if len(content) > MAX_NOTE_LENGTH:
-        return jsonify({"error": f"Note exceeds {MAX_NOTE_LENGTH:,} characters"}), 400
 
     category = db.session.get(Category, cat_uuid)
     if not category or category.user_id != current_user().id:
@@ -532,17 +507,14 @@ def create_note():
     if category.archived:
         return jsonify({"error": "Cannot add notes to an archived category"}), 409
 
-    try:
-        ciphertext, iv = encrypt_note(content)
-    except EnvironmentError as exc:
-        logger.error(f"Encryption key misconfiguration: {exc}")
-        return jsonify({"error": "Server encryption configuration error"}), 500
-
     note = Note(
-        user_id=current_user().id,
-        category_id=category.id,
-        content=ciphertext,
-        iv=iv
+        user_id     = current_user().id,
+        category_id = category.id,
+        content     = ciphertext,
+        iv          = iv,
+        salt        = salt,
+        title       = title,
+        version     = 1,
     )
     db.session.add(note)
 
@@ -550,7 +522,7 @@ def create_note():
         return err
 
     logger.info(f"Note created: {note.id} in category {category.id}")
-    return jsonify({"id": str(note.id), "content": content, "version": note.version}), 201
+    return jsonify({"id": str(note.id), "version": note.version}), 201
 
 
 @app.route("/notes", methods=["GET"])
@@ -560,23 +532,45 @@ def get_notes():
     result = []
 
     for n in notes:
-        try:
-            plaintext = decrypt_note(n.content, n.iv)
-        except (ValueError, EnvironmentError) as exc:
-            logger.error(
-                f"Decryption failed for note {n.id} (user {n.user_id}): {exc}"
-            )
-            plaintext = "[Note could not be decrypted]"
-
         result.append({
             "id":          str(n.id),
-            "content":     plaintext,
-            "category_id": str(n.category_id),
+            "title":       n.title,
+            "ciphertext":  n.content,
+            "iv":          n.iv,
+            "salt":        n.salt,
+            "category_id": str(n.category_id) if n.category_id else None,
             "archived":    n.archived,
-            "version":     n.version
+            "version":     n.version,
+            "created_at":  n.created_at.isoformat(),
+            "updated_at":  n.updated_at.isoformat(),
         })
 
     return jsonify(result)
+
+
+@app.route("/notes/<note_id>", methods=["GET"])
+@require_login
+def get_note(note_id):
+    note_uuid, err = parse_uuid(note_id, "note_id")
+    if err:
+        return err
+
+    note = db.session.get(Note, note_uuid)
+    if not note or note.user_id != current_user().id:
+        return jsonify({"error": "Note not found"}), 404
+
+    return jsonify({
+        "id":          str(note.id),
+        "title":       note.title,
+        "ciphertext":  note.content,
+        "iv":          note.iv,
+        "salt":        note.salt,
+        "category_id": str(note.category_id) if note.category_id else None,
+        "archived":    note.archived,
+        "version":     note.version,
+        "created_at":  note.created_at.isoformat(),
+        "updated_at":  note.updated_at.isoformat(),
+    })
 
 
 @app.route("/notes/<note_id>", methods=["PUT"])
@@ -597,13 +591,19 @@ def update_note(note_id):
     if not data:
         return jsonify({"error": "Request body must be JSON"}), 400
 
-    content = data.get("content", "")
+    ciphertext = data.get("ciphertext", "")
+    iv         = data.get("iv", "")
+    salt       = data.get("salt", "")
+    title      = data.get("title", note.title)
 
-    if not isinstance(content, str):
-        return jsonify({"error": "content must be a string"}), 400
+    if not ciphertext or not iv or not salt:
+        return jsonify({"error": "ciphertext, iv, and salt are required"}), 400
 
-    if len(content) > MAX_NOTE_LENGTH:
-        return jsonify({"error": f"Note exceeds {MAX_NOTE_LENGTH:,} characters"}), 400
+    if not isinstance(ciphertext, str):
+        return jsonify({"error": "ciphertext must be a string"}), 400
+
+    if len(ciphertext) > MAX_NOTE_LENGTH * 2:
+        return jsonify({"error": "Note content too large"}), 400
 
     client_version = data.get("version")
 
@@ -619,19 +619,15 @@ def update_note(note_id):
             f"client={client_version}, server={note.version}"
         )
         return jsonify({
-            "error": "Version conflict",
-            "detail": "This note was modified elsewhere. Fetch the latest version and retry.",
+            "error":          "Version conflict",
+            "detail":         "This note was modified elsewhere. Fetch the latest version and retry.",
             "server_version": note.version
         }), 409
 
-    try:
-        ciphertext, iv = encrypt_note(content)
-    except EnvironmentError as exc:
-        logger.error(f"Encryption key misconfiguration: {exc}")
-        return jsonify({"error": "Server encryption configuration error"}), 500
-
     note.content       = ciphertext
     note.iv            = iv
+    note.salt          = salt
+    note.title         = title
     note.last_modified = datetime.now()
     note.version      += 1
 
@@ -664,33 +660,6 @@ def archive_note(note_id):
     logger.info(f"Note archived: {note.id}")
     return jsonify({"message": "Note archived"})
 
-@app.route("/notes/<note_id>", methods=["GET"])
-@require_login
-def get_note(note_id):
-    note_uuid, err = parse_uuid(note_id, "note_id")
-    if err:
-        return err
-
-    note = db.session.get(Note, note_uuid)
-    if not note or note.user_id != current_user().id:
-        return jsonify({"error": "Note not found"}), 404
-
-    try:
-        content = decrypt_note(note.content, note.iv)
-    except ValueError:
-        logger.error(f"Failed to decrypt note {note.id}")
-        return jsonify({"error": "Failed to decrypt note"}), 500
-
-    return jsonify({
-        "id":          str(note.id),
-        "title":       note.title,
-        "content":     content,
-        "category_id": str(note.category_id) if note.category_id else None,
-        "archived":    note.archived,
-        "version":     note.version,
-        "created_at":  note.created_at.isoformat(),
-        "updated_at":  note.updated_at.isoformat(),
-    })
 
 # ─────────────────────────────────────────────
 # MODELS
@@ -723,16 +692,18 @@ class Category(db.Model):
 class Note(db.Model):
     __tablename__ = 'notes'
 
-    id          = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id     = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
-    category_id = db.Column(UUID(as_uuid=True), db.ForeignKey('categories.id'))
-    content     = db.Column(db.Text)          # base64 ciphertext — never plaintext
-    iv          = db.Column(db.String(64))    # base64 IV/nonce
-    created_at  = db.Column(db.DateTime, default=datetime.now)
-    updated_at  = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
-    archived    = db.Column(db.Boolean, default=False)
+    id            = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id       = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id'))
+    category_id   = db.Column(UUID(as_uuid=True), db.ForeignKey('categories.id'))
+    title         = db.Column(db.String(255))
+    content       = db.Column(db.Text)        # base64 ciphertext — never plaintext
+    iv            = db.Column(db.String(64))  # base64 IV/nonce
+    salt          = db.Column(db.String(64))  # base64 PBKDF2 salt
+    created_at    = db.Column(db.DateTime, default=datetime.now)
+    updated_at    = db.Column(db.DateTime, default=datetime.now, onupdate=datetime.now)
+    archived      = db.Column(db.Boolean, default=False)
     last_modified = db.Column(db.DateTime, default=datetime.now)
-    version     = db.Column(db.Integer, default=1, nullable=False)
+    version       = db.Column(db.Integer, default=1, nullable=False)
 
 
 if __name__ == "__main__":

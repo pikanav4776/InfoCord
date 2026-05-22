@@ -1,0 +1,20 @@
+(.venv) PS C:\InfoCord> Get-ChildItem -Recurse -Filter "*.py" | Select-String "def create_note|def add_note|POST.*notes"
+
+run.py:506:def create_note():
+test_auth.py:76:    res = client.post("/notes", json={"category_id": category_id, "content": content})
+test_auth.py:257:        res = client.post("/notes", json={"category_id": "not-a-uuid", "content": "x"})
+test_auth.py:309:        res = client.post("/notes", json={"category_id": cat_id, "content": "new note"})
+test_auth.py:386:        res = client.post("/notes", json={"category_id": cat_id, "content": 12345})
+test_auth.py:399:        res = client.post("/notes", data="not json", content_type="text/plain")
+test_auth.py:604:        assert client.post("/notes", json={"category_id": cat_id, "content": "hi"}).status_code == 201
+test_auth.py:609:        res = client.post("/notes", json={"category_id": cat_id, "content": "my secret"})
+test_auth.py:613:        assert client.post("/notes", json={"category_id": "x", "content": "y"}).status_code == 401
+test_auth.py:617:        assert client.post("/notes", json={"content": "orphan"}).status_code == 400
+test_auth.py:622:        assert client.post("/notes", json={"category_id": cat_id, "content": "a" * 10001}).status_code == 400
+test_auth.py:627:        client.post("/notes", json={"category_id": cat_id, "content": "decrypted content"})
+test_auth.py:635:        client.post("/notes", json={"category_id": cat_id, "content": plaintext})
+test_auth.py:645:            client.post("/notes", json={"category_id": cat_id, "content": c})
+test_auth.py:652:        client.post("/notes", json={"category_id": cat_id, "content": "private"})
+test_auth.py:700:        res = client.post("/notes", json={
+test_auth.py:715:        res = client.post("/notes", json={"category_id": cat_id, "content": "v1"})
+test_auth.py:721:        client.post("/notes", json={"category_id": cat_id, "content": "versioned"})
