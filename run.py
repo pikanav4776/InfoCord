@@ -47,8 +47,11 @@ def normalize_db_url(url: str) -> str:
     return url
 
 
-app.config['SQLALCHEMY_DATABASE_URI'] = normalize_db_url(DATABASE_URL) or \
-    f'postgresql+psycopg2://{DB_username}:{DB_password}@localhost:{DB_PORT}/infocord_mvp'
+app.config['SQLALCHEMY_DATABASE_URI'] = (
+    os.getenv('TEST_DATABASE_URI')
+    or normalize_db_url(DATABASE_URL)
+    or f'postgresql+psycopg2://{DB_username}:{DB_password}@localhost:{DB_PORT}/infocord_mvp'
+)
 
 
 # ─────────────────────────────────────────────
