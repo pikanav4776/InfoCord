@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timedelta
 from functools import wraps
 
-from flask import Flask, request, jsonify, session, g
+from flask import Flask, request, jsonify, session, g, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from sqlalchemy.dialects.postgresql import UUID
@@ -235,6 +235,9 @@ def db_commit(label: str):
 def home():
     return jsonify({"message": "InfoCord API running"})
 
+@app.route("/app")
+def frontend():
+    return render_template("index.html")
 
 @app.route("/health")
 def health():
