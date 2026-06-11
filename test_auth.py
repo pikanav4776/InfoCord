@@ -654,11 +654,27 @@ class TestNotes:
         payload = fake_encrypted_payload()
         assert client.post("/notes", json={"category_id": "x", **payload}).status_code == 401
 
-    def test_create_note_missing_category(self, client):
+    def test_create_note_without_category(self, client):
         signup_and_login(client)
-        payload = fake_encrypted_payload()
-        del payload  # ensure we test without category_id
-        assert client.post("/notes", json=fake_encrypted_payload()).status_code == 400
+        res = client.post("/notes", json=fake_encrypted_payload())
+        assert res.status_code == 201
+        note_id = res.get_json()["id"]
+        note = client.get(f"/notes/{note_id}").get_json()
+        assert note["category_id"] is None
+
+    def test_update_note_category_optional(self, client):
+        signup_and_login(client)
+        cat_id = make_category(client)
+        enc = fake_encrypted_payload("folder note")
+        note_id = client.post("/notes", json={"category_id": cat_id, **enc}).get_json()["id"]
+        enc2 = fake_encrypted_payload("no folder note")
+        res = client.put(f"/notes/{note_id}", json={
+            "category_id": None,
+            **enc2,
+            "version": 1,
+        })
+        assert res.status_code == 200
+        assert client.get(f"/notes/{note_id}").get_json()["category_id"] is None
 
     def test_get_notes_returns_ciphertext_not_plaintext(self, client):
         """
@@ -754,6 +770,49 @@ class TestNotes:
         cat_id  = make_category(client)
         note_id = make_note(client, cat_id)["id"]
         assert client.patch(f"/notes/{note_id}/archive").status_code == 200
+
+    def test_unarchive_note(self, client):
+        signup_and_login(client)
+        cat_id  = make_category(client)
+        note_id = make_note(client, cat_id)["id"]
+        client.patch(f"/notes/{note_id}/archive")
+        res = client.patch(f"/notes/{note_id}/unarchive")
+        assert res.status_code == 200
+        assert client.get(f"/notes/{note_id}").get_json()["archived"] is False
+
+    def test_cannot_unarchive_active_note(self, client):
+        signup_and_login(client)
+        cat_id  = make_category(client)
+        note_id = make_note(client, cat_id)["id"]
+        assert client.patch(f"/notes/{note_id}/unarchive").status_code == 409
+
+    def test_create_note_with_links(self, client):
+        signup_and_login(client)
+        cat_id = make_category(client)
+        note_a = make_note(client, cat_id, "alpha", "Note A")["id"]
+        note_b = make_note(client, cat_id, "beta", "Note B")["id"]
+        enc = fake_encrypted_payload("linked note")
+        res = client.post("/notes", json={
+            "title": "Hub",
+            "linked_note_ids": [note_a, note_b],
+            **enc,
+        })
+        assert res.status_code == 201
+        hub_id = res.get_json()["id"]
+        hub = client.get(f"/notes/{hub_id}").get_json()
+        assert set(hub["linked_note_ids"]) == {note_a, note_b}
+
+    def test_cannot_link_note_to_itself(self, client):
+        signup_and_login(client)
+        cat_id = make_category(client)
+        note_id = make_note(client, cat_id)["id"]
+        enc = fake_encrypted_payload("self link")
+        res = client.put(f"/notes/{note_id}", json={
+            "linked_note_ids": [note_id],
+            "version": 1,
+            **enc,
+        })
+        assert res.status_code == 400
 
     def test_cannot_archive_another_users_note(self, client):
         signup_and_login(client, "owner@example.com")
@@ -898,3 +957,548 @@ class TestVersionSync:
         retry = client.put(f"/notes/{note_id}", json=pB2)
         assert retry.status_code == 200
         assert retry.get_json()["version"] == 3
+
+# ─────────────────────────────────────────────
+# RECOVERY KEY TESTS (Step 5)
+# ─────────────────────────────────────────────
+
+class TestAccountRecovery:
+    def test_signup_returns_24_char_recovery_key(self, client):
+        res = client.post("/auth/signup", json={
+            "email": "recover@example.com", "password": "password123", "name": "Recover Me"
+        })
+        assert res.status_code == 201
+        body = res.get_json()
+        assert "recovery_key" in body
+        assert len(body["recovery_key"]) == 24
+
+    def test_recovery_success(self, client):
+        # Register and extract recovery key
+        res = client.post("/auth/signup", json={
+            "email": "rec_flow@example.com", "password": "oldpassword123", "name": "Flow"
+        })
+        recovery_key = res.get_json()["recovery_key"]
+
+        # Request reset
+        rec_res = client.post("/auth/recover", json={
+            "email": "rec_flow@example.com",
+            "recovery_key": recovery_key,
+            "new_password": "newpassword123"
+        })
+        assert rec_res.status_code == 200
+
+        # Attempt login using new password
+        login_res = client.post("/auth/login", json={
+            "email": "rec_flow@example.com", "password": "newpassword123"
+        })
+        assert login_res.status_code == 200
+
+    def test_recovery_fails_with_invalid_key(self, client):
+        client.post("/auth/signup", json={
+            "email": "bad_key@example.com", "password": "password123", "name": "User"
+        })
+        res = client.post("/auth/recover", json={
+            "email": "bad_key@example.com",
+            "recovery_key": "WRONG-KEY-12345678901234",
+            "new_password": "newpassword123"
+        })
+        assert res.status_code == 401
+
+
+# ─────────────────────────────────────────────
+# PASSWORD CHANGE TESTS (Step 6)
+# ─────────────────────────────────────────────
+
+class TestPasswordChangeFlow:
+    def test_change_password_and_reencrypt_notes(self, client):
+        signup_and_login(client, "change_flow@example.com", "oldpassword123")
+        cat_id = make_category(client)
+        
+        # Create an initial note
+        note = make_note(client, cat_id, "Initial Secure Data")
+        note_id = note["id"]
+
+        # Prepare payload imitating client-side master password alteration
+        new_encrypted = fake_encrypted_payload("Data updated with Key B")
+        payload = {
+            "old_password": "oldpassword123",
+            "new_password": "newpassword123",
+            "notes": [
+                {
+                    "id": note_id,
+                    "version": 1,
+                    "ciphertext": new_encrypted["ciphertext"],
+                    "iv": new_encrypted["iv"],
+                    "salt": new_encrypted["salt"]
+                }
+            ]
+        }
+
+        res = client.post("/auth/change-password", json=payload)
+        assert res.status_code == 200
+
+        # Confirm old password no longer works
+        client.post("/auth/logout")
+        assert client.post("/auth/login", json={
+            "email": "change_flow@example.com", "password": "oldpassword123"
+        }).status_code == 401
+
+        # Confirm new password logs in and can access updated ciphertext
+        client.post("/auth/login", json={
+            "email": "change_flow@example.com", "password": "newpassword123"
+        })
+        
+        fetched_note = client.get(f"/notes/{note_id}").get_json()
+        assert fetched_note["ciphertext"] == new_encrypted["ciphertext"]
+        assert fetched_note["version"] == 2
+
+# ─────────────────────────────────────────────
+# GET /notes/<id> ENDPOINT TESTS
+# ─────────────────────────────────────────────
+
+class TestGetSingleNote:
+    """
+    Tests for GET /notes/<note_id> — the single-note fetch endpoint used by
+    the Flutter client during conflict resolution (fetch latest after 409).
+    """
+
+    def test_get_single_note_success(self, client):
+        signup_and_login(client)
+        cat_id  = make_category(client)
+        note_id = make_note(client, cat_id, "secret", "My Note")["id"]
+
+        res = client.get(f"/notes/{note_id}")
+        assert res.status_code == 200
+        body = res.get_json()
+        assert body["id"] == note_id
+
+    def test_get_single_note_returns_all_fields(self, client):
+        """Client needs id, ciphertext, iv, salt, version, title, category_id."""
+        signup_and_login(client)
+        cat_id = make_category(client)
+        enc    = fake_encrypted_payload("content")
+        note_id = client.post("/notes", json={
+            "category_id": cat_id, "title": "Test Title", **enc
+        }).get_json()["id"]
+
+        note = client.get(f"/notes/{note_id}").get_json()
+        for field in ["id", "title", "ciphertext", "iv", "salt", "version",
+                      "category_id", "archived", "linked_note_ids",
+                      "created_at", "updated_at"]:
+            assert field in note, f"Missing field: {field}"
+
+    def test_get_single_note_returns_correct_ciphertext(self, client):
+        signup_and_login(client)
+        cat_id = make_category(client)
+        enc    = fake_encrypted_payload("secret content")
+        note_id = client.post("/notes", json={"category_id": cat_id, **enc}).get_json()["id"]
+
+        note = client.get(f"/notes/{note_id}").get_json()
+        assert note["ciphertext"] == enc["ciphertext"]
+        assert note["iv"]         == enc["iv"]
+        assert note["salt"]       == enc["salt"]
+
+    def test_get_single_note_requires_login(self, client):
+        # Create a note, then sign out before fetching
+        signup_and_login(client)
+        cat_id  = make_category(client)
+        note_id = make_note(client, cat_id)["id"]
+        client.post("/auth/logout")
+        assert client.get(f"/notes/{note_id}").status_code == 401
+
+    def test_get_single_note_wrong_user_returns_404(self, client):
+        """Other users must not be able to read someone else's note ID."""
+        signup_and_login(client, "owner@example.com")
+        cat_id  = make_category(client)
+        note_id = make_note(client, cat_id)["id"]
+        client.post("/auth/logout")
+
+        signup_and_login(client, "spy@example.com")
+        assert client.get(f"/notes/{note_id}").status_code == 404
+
+    def test_get_single_note_bad_uuid_returns_400(self, client):
+        signup_and_login(client)
+        assert client.get("/notes/not-a-uuid").status_code == 400
+
+    def test_get_single_note_nonexistent_returns_404(self, client):
+        signup_and_login(client)
+        assert client.get("/notes/00000000-0000-0000-0000-000000000000").status_code == 404
+
+    def test_get_single_note_reflects_update(self, client):
+        """After a PUT, GET /notes/<id> must return the new ciphertext."""
+        signup_and_login(client)
+        cat_id  = make_category(client)
+        enc1    = fake_encrypted_payload("original")
+        note_id = client.post("/notes", json={"category_id": cat_id, **enc1}).get_json()["id"]
+
+        enc2 = fake_encrypted_payload("updated")
+        client.put(f"/notes/{note_id}", json={"version": 1, **enc2})
+
+        note = client.get(f"/notes/{note_id}").get_json()
+        assert note["ciphertext"] == enc2["ciphertext"]
+        assert note["version"]    == 2
+
+
+# ─────────────────────────────────────────────
+# EXTENDED RECOVERY KEY TESTS (Step 5)
+# ─────────────────────────────────────────────
+
+class TestAccountRecoveryExtended:
+    """
+    Covers every edge case of the recovery flow not in TestAccountRecovery.
+    """
+
+    def test_recovery_requires_json(self, client):
+        res = client.post("/auth/recover", data="not json",
+                          content_type="text/plain")
+        assert res.status_code == 400
+
+    def test_recovery_missing_email(self, client):
+        res = client.post("/auth/recover", json={
+            "recovery_key": "SOMEKEY123456789012345",
+            "new_password": "newpassword123"
+        })
+        assert res.status_code == 400
+
+    def test_recovery_missing_recovery_key(self, client):
+        res = client.post("/auth/recover", json={
+            "email": "user@example.com",
+            "new_password": "newpassword123"
+        })
+        assert res.status_code == 400
+
+    def test_recovery_missing_new_password(self, client):
+        res = client.post("/auth/recover", json={
+            "email": "user@example.com",
+            "recovery_key": "SOMEKEY123456789012345"
+        })
+        assert res.status_code == 400
+
+    def test_recovery_new_password_too_short(self, client):
+        client.post("/auth/signup", json={
+            "email": "short@example.com", "password": "password123", "name": "User"
+        })
+        res = client.post("/auth/recover", json={
+            "email": "short@example.com",
+            "recovery_key": "SOMEKEY123456789012345",
+            "new_password": "abc"
+        })
+        assert res.status_code == 400
+        assert "8" in res.get_json()["error"]
+
+    def test_recovery_nonexistent_email_returns_401(self, client):
+        """Must not reveal whether the email exists."""
+        res = client.post("/auth/recover", json={
+            "email": "nobody@example.com",
+            "recovery_key": "SOMEKEY123456789012345",
+            "new_password": "newpassword123"
+        })
+        assert res.status_code == 401
+
+    def test_recovery_key_is_one_time_use(self, client):
+        """After a successful recovery, the same key must not work again."""
+        res = client.post("/auth/signup", json={
+            "email": "once@example.com", "password": "password123", "name": "Once"
+        })
+        recovery_key = res.get_json()["recovery_key"]
+
+        # First recovery succeeds
+        r1 = client.post("/auth/recover", json={
+            "email": "once@example.com",
+            "recovery_key": recovery_key,
+            "new_password": "firstnewpass"
+        })
+        assert r1.status_code == 200
+
+        # Second attempt with same key must fail
+        r2 = client.post("/auth/recover", json={
+            "email": "once@example.com",
+            "recovery_key": recovery_key,
+            "new_password": "secondnewpass"
+        })
+        assert r2.status_code == 401
+
+    def test_recovery_old_password_no_longer_works(self, client):
+        """After recovery reset, the original password must be rejected."""
+        res = client.post("/auth/signup", json={
+            "email": "oldpass@example.com", "password": "originalpass", "name": "Test"
+        })
+        recovery_key = res.get_json()["recovery_key"]
+
+        client.post("/auth/recover", json={
+            "email": "oldpass@example.com",
+            "recovery_key": recovery_key,
+            "new_password": "brandnewpass"
+        })
+
+        assert client.post("/auth/login", json={
+            "email": "oldpass@example.com", "password": "originalpass"
+        }).status_code == 401
+
+    def test_recovery_lockout_after_5_bad_keys(self, client):
+        """Brute-forcing recovery keys must trigger account lockout."""
+        client.post("/auth/signup", json={
+            "email": "brute@example.com", "password": "password123", "name": "Brute"
+        })
+
+        for _ in range(5):
+            client.post("/auth/recover", json={
+                "email": "brute@example.com",
+                "recovery_key": "WRONGKEY000000000000000",
+                "new_password": "newpassword123"
+            })
+
+        # Account is now locked — even correct password should be rejected
+        res = client.post("/auth/login", json={
+            "email": "brute@example.com", "password": "password123"
+        })
+        assert res.status_code == 423
+
+    def test_signup_recovery_key_is_exactly_24_chars(self, client):
+        res = client.post("/auth/signup", json={
+            "email": "len@example.com", "password": "password123", "name": "Len"
+        })
+        key = res.get_json()["recovery_key"]
+        assert len(key) == 24, f"Expected 24, got {len(key)}: {key!r}"
+
+    def test_recovery_key_not_exposed_on_login(self, client):
+        """The recovery key must never appear in a login response."""
+        signup_and_login(client, "nokey@example.com")
+        res = client.post("/auth/login", json={
+            "email": "nokey@example.com", "password": "password123"
+        })
+        assert "recovery_key" not in res.get_json()
+
+    def test_recovery_regenerate_key_requires_login(self, client):
+        res = client.post("/auth/recovery-key")
+        assert res.status_code == 401
+
+    def test_recovery_regenerate_key_invalidates_old(self, client):
+        """After regenerating, the old recovery key must no longer work."""
+        res = client.post("/auth/signup", json={
+            "email": "regen@example.com", "password": "password123", "name": "Regen"
+        })
+        old_key = res.get_json()["recovery_key"]
+
+        # Login and regenerate
+        client.post("/auth/login", json={
+            "email": "regen@example.com", "password": "password123"
+        })
+        regen_res = client.post("/auth/recovery-key")
+        assert regen_res.status_code == 200
+        new_key = regen_res.get_json()["recovery_key"]
+        assert new_key != old_key
+
+        # Old key must no longer work
+        client.post("/auth/logout")
+        r = client.post("/auth/recover", json={
+            "email": "regen@example.com",
+            "recovery_key": old_key,
+            "new_password": "newpassword123"
+        })
+        assert r.status_code == 401
+
+    def test_recovery_regenerate_new_key_works(self, client):
+        """After regenerating, the new key must work for recovery."""
+        client.post("/auth/signup", json={
+            "email": "newkey@example.com", "password": "password123", "name": "New"
+        })
+        client.post("/auth/login", json={
+            "email": "newkey@example.com", "password": "password123"
+        })
+        new_key = client.post("/auth/recovery-key").get_json()["recovery_key"]
+        client.post("/auth/logout")
+
+        r = client.post("/auth/recover", json={
+            "email": "newkey@example.com",
+            "recovery_key": new_key,
+            "new_password": "freshpassword123"
+        })
+        assert r.status_code == 200
+
+
+# ─────────────────────────────────────────────
+# EXTENDED PASSWORD CHANGE TESTS (Step 6)
+# ─────────────────────────────────────────────
+
+class TestPasswordChangeExtended:
+    """
+    Covers every edge case of /auth/change-password not in TestPasswordChangeFlow.
+    """
+
+    def test_change_password_requires_login(self, client):
+        res = client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "new_password": "newpassword123",
+            "notes": []
+        })
+        assert res.status_code == 401
+
+    def test_change_password_requires_json(self, client):
+        signup_and_login(client)
+        res = client.post("/auth/change-password", data="not json",
+                          content_type="text/plain")
+        assert res.status_code == 400
+
+    def test_change_password_wrong_current_password(self, client):
+        signup_and_login(client)
+        res = client.post("/auth/change-password", json={
+            "old_password": "WRONGPASSWORD",
+            "new_password": "newpassword123",
+            "notes": []
+        })
+        assert res.status_code == 401
+        assert "Invalid" in res.get_json()["error"]
+
+    def test_change_password_new_too_short(self, client):
+        signup_and_login(client)
+        res = client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "new_password": "abc",
+            "notes": []
+        })
+        assert res.status_code == 400
+        assert "8" in res.get_json()["error"]
+
+    def test_change_password_missing_old_password(self, client):
+        signup_and_login(client)
+        res = client.post("/auth/change-password", json={
+            "new_password": "newpassword123",
+            "notes": []
+        })
+        assert res.status_code == 400
+
+    def test_change_password_missing_new_password(self, client):
+        signup_and_login(client)
+        res = client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "notes": []
+        })
+        assert res.status_code == 400
+
+    def test_change_password_no_notes_succeeds(self, client):
+        """Password change with an empty notes list should succeed (user has no notes)."""
+        signup_and_login(client)
+        res = client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "new_password": "newpassword123",
+            "notes": []
+        })
+        assert res.status_code == 200
+
+    def test_change_password_with_multiple_notes(self, client):
+        """All notes in the batch must be re-encrypted atomically."""
+        signup_and_login(client)
+        cat_id = make_category(client)
+
+        note1_id = make_note(client, cat_id, "note one",   "One")["id"]
+        note2_id = make_note(client, cat_id, "note two",   "Two")["id"]
+        note3_id = make_note(client, cat_id, "note three", "Three")["id"]
+
+        enc1 = fake_encrypted_payload("new one")
+        enc2 = fake_encrypted_payload("new two")
+        enc3 = fake_encrypted_payload("new three")
+
+        res = client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "new_password": "newpassword123",
+            "notes": [
+                {"id": note1_id, "version": 1, **enc1},
+                {"id": note2_id, "version": 1, **enc2},
+                {"id": note3_id, "version": 1, **enc3},
+            ]
+        })
+        assert res.status_code == 200
+
+        # Each note must have the new ciphertext and version=2
+        for nid, enc in [(note1_id, enc1), (note2_id, enc2), (note3_id, enc3)]:
+            note = client.get(f"/notes/{nid}").get_json()
+            assert note["ciphertext"] == enc["ciphertext"]
+            assert note["version"]    == 2
+
+    def test_change_password_version_conflict_aborts_all(self, client):
+        """
+        If one note in the batch has a version conflict, the entire
+        operation must be rolled back — nothing should be committed.
+        """
+        signup_and_login(client)
+        cat_id = make_category(client)
+
+        note1_id = make_note(client, cat_id, "note a", "A")["id"]
+        note2_id = make_note(client, cat_id, "note b", "B")["id"]
+
+        # Bump note2 to version 2 so version=1 in the batch is stale
+        enc_bump = fake_encrypted_payload("bumped")
+        client.put(f"/notes/{note2_id}", json={"version": 1, **enc_bump})
+
+        enc1 = fake_encrypted_payload("re-enc a")
+        enc2 = fake_encrypted_payload("re-enc b")
+
+        res = client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "new_password": "newpassword123",
+            "notes": [
+                {"id": note1_id, "version": 1, **enc1},  # correct
+                {"id": note2_id, "version": 1, **enc2},  # stale — should abort
+            ]
+        })
+        assert res.status_code == 409
+
+        # note1 must NOT have been updated (rollback means the old ciphertext is intact)
+        note1 = client.get(f"/notes/{note1_id}").get_json()
+        assert note1["version"] == 1
+
+    def test_change_password_note_wrong_user_rejected(self, client):
+        """A note belonging to a different user must be rejected mid-batch."""
+        # Create a note as user1
+        signup_and_login(client, "owner@example.com")
+        cat_id  = make_category(client)
+        note_id = make_note(client, cat_id)["id"]
+        client.post("/auth/logout")
+
+        # user2 tries to include user1's note in their password change
+        signup_and_login(client, "attacker@example.com")
+        enc = fake_encrypted_payload("steal")
+        res = client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "new_password": "newpassword123",
+            "notes": [{"id": note_id, "version": 1, **enc}]
+        })
+        assert res.status_code == 404
+
+    def test_change_password_malformed_note_entry_rejected(self, client):
+        """A note entry missing ciphertext/iv/salt must be caught before any DB write."""
+        signup_and_login(client)
+        cat_id  = make_category(client)
+        note_id = make_note(client, cat_id)["id"]
+
+        res = client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "new_password": "newpassword123",
+            "notes": [{"id": note_id, "version": 1}]  # missing ciphertext, iv, salt
+        })
+        assert res.status_code == 400
+
+    def test_change_password_old_password_rejected_after_change(self, client):
+        signup_and_login(client)
+        client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "new_password": "newpassword123",
+            "notes": []
+        })
+        client.post("/auth/logout")
+        assert client.post("/auth/login", json={
+            "email": "crud@example.com", "password": "password123"
+        }).status_code == 401
+
+    def test_change_password_new_password_works_after_change(self, client):
+        signup_and_login(client)
+        client.post("/auth/change-password", json={
+            "old_password": "password123",
+            "new_password": "newpassword123",
+            "notes": []
+        })
+        client.post("/auth/logout")
+        assert client.post("/auth/login", json={
+            "email": "crud@example.com", "password": "newpassword123"
+        }).status_code == 200

@@ -741,6 +741,56 @@
   .color-swatch:hover { transform: scale(1.15); }
   .color-swatch.selected { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg2); }
 
+  .color-picker-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .color-picker-input {
+    width: 40px;
+    height: 40px;
+    padding: 0;
+    border: 2px solid var(--border2);
+    border-radius: var(--radius);
+    cursor: pointer;
+    background: none;
+  }
+
+  .color-picker-input::-webkit-color-swatch-wrapper { padding: 2px; }
+  .color-picker-input::-webkit-color-swatch { border: none; border-radius: 4px; }
+
+  .sidebar-item .sidebar-actions {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+    opacity: 0;
+    transition: opacity var(--transition);
+  }
+
+  .sidebar-item:hover .sidebar-actions { opacity: 1; }
+
+  .sidebar-action-btn {
+    width: 22px;
+    height: 22px;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--text3);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    flex-shrink: 0;
+  }
+
+  .sidebar-action-btn:hover {
+    color: var(--text);
+    background: var(--bg2);
+  }
+
   .char-count {
     font-family: var(--mono);
     font-size: 10px;
@@ -876,6 +926,44 @@
   @keyframes spin { to { transform: rotate(360deg); } }
 
   /* ── Archived badge ──────────────────────────────────────────── */
+  .note-link-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bg3);
+    border: 1px solid var(--border2);
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text2);
+    cursor: pointer;
+    max-width: 120px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .note-link-chip:hover {
+    color: var(--accent);
+    border-color: rgba(200,240,74,0.35);
+  }
+
+  .note-links-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .form-hint {
+    font-family: var(--mono);
+    font-size: 9px;
+    color: var(--text3);
+    margin-top: 4px;
+    line-height: 1.5;
+  }
+
   .archived-badge {
     font-family: var(--mono);
     font-size: 9px;
@@ -907,6 +995,7 @@
     <div class="auth-tabs">
       <button class="auth-tab active" id="tab-login" onclick="switchAuthTab('login')">Sign In</button>
       <button class="auth-tab" id="tab-signup" onclick="switchAuthTab('signup')">Create Account</button>
+      <button class="auth-tab" id="tab-recover" onclick="switchAuthTab('recover')">Recover</button>
     </div>
 
     <!-- Login -->
@@ -941,6 +1030,28 @@
       <button class="auth-btn" id="signup-btn" onclick="handleSignup()">Create Account</button>
     </div>
 
+    <!-- Recover Account -->
+    <div class="auth-form hidden" id="form-recover">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--text3);line-height:1.6;padding:10px 12px;background:rgba(240,74,74,0.06);border:1px solid rgba(240,74,74,0.2);border-radius:var(--radius);margin-bottom:4px;">
+        ⚠ Notes encrypted with your old password <strong>cannot</strong> be recovered after a reset.
+      </div>
+      <div class="field-wrap">
+        <div class="field-label">Email</div>
+        <input class="auth-input" id="recover-email" type="email" placeholder="you@example.com">
+      </div>
+      <div class="field-wrap">
+        <div class="field-label">Recovery Key</div>
+        <input class="auth-input" id="recover-key" type="text" placeholder="e.g. AbCdEfGhIjKl..." style="font-family:var(--mono);letter-spacing:1px;">
+      </div>
+      <div class="field-wrap">
+        <div class="field-label">New Password</div>
+        <input class="auth-input" id="recover-newpass" type="password" placeholder="Min 8 characters">
+      </div>
+      <div class="auth-error" id="recover-error"></div>
+      <button class="auth-btn" onclick="handleRecover()">Reset Password</button>
+    </div>
+
+
     <div class="e2ee-note">
       🔒 Your notes are encrypted in your browser before they reach our servers. We cannot read your data.
       <br><br>Your password <strong>is</strong> your encryption key — it cannot be recovered if lost.
@@ -962,6 +1073,7 @@
         E2EE
       </div>
       <div class="topbar-user">Signed in as <span id="user-name-display">—</span></div>
+      <button class="topbar-btn" onclick="openSettingsModal()">⚙ Settings</button>
       <button class="topbar-btn" onclick="handleLogout()">Sign Out</button>
       <button class="topbar-btn primary" onclick="openNewNoteModal()">+ New Note</button>
     </div>
@@ -1074,10 +1186,15 @@
         <input class="form-input" id="note-title-input" type="text" placeholder="Note title…" maxlength="100">
       </div>
       <div class="form-field">
-        <label class="form-label">Folder</label>
+        <label class="form-label">Folder <span style="color:var(--text3);font-size:9px;">(optional)</span></label>
         <select class="form-input" id="note-category-select" style="cursor:pointer;">
-          <option value="">Select folder…</option>
+          <option value="">No folder</option>
         </select>
+      </div>
+      <div class="form-field">
+        <label class="form-label">Linked Notes <span style="color:var(--text3);font-size:9px;">(optional, up to 10)</span></label>
+        <select class="form-input" id="note-links-select" multiple size="5" style="cursor:pointer;min-height:110px;"></select>
+        <div class="form-hint">Hold Ctrl (Windows) or Cmd (Mac) to select multiple notes.</div>
       </div>
       <div class="form-field">
         <label class="form-label">Content</label>
@@ -1111,11 +1228,85 @@
       <div class="form-field">
         <label class="form-label">Color</label>
         <div class="color-row" id="color-swatches"></div>
+        <div class="color-picker-row">
+          <input class="color-picker-input" id="cat-color-picker" type="color" title="Pick any color">
+          <span style="font-family:var(--mono);font-size:10px;color:var(--text3);">Custom color</span>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
       <button class="btn" onclick="closeModal('cat-modal')">Cancel</button>
-      <button class="btn-primary btn" onclick="saveCategory()">Create Folder</button>
+      <button class="btn-primary btn" id="cat-save-btn" onclick="saveCategory()">Create Folder</button>
+    </div>
+  </div>
+</div>
+
+
+<!-- Recovery Key Display Modal — shown once after signup -->
+<div class="modal-overlay hidden" id="recovery-key-modal">
+  <div class="modal" style="width:480px;">
+    <div class="modal-header">
+      <div class="modal-title">🔑 Your Recovery Key</div>
+    </div>
+    <div class="modal-body" style="gap:14px;">
+      <div style="font-family:var(--mono);font-size:11px;color:var(--danger);line-height:1.7;padding:12px;background:rgba(240,74,74,0.06);border:1px solid rgba(240,74,74,0.2);border-radius:var(--radius);">
+        This key is shown <strong>exactly once</strong> and cannot be retrieved again.<br>
+        If you lose your password and this key, your notes are <strong>permanently unrecoverable</strong>.
+      </div>
+      <div style="background:var(--bg3);border:1px solid var(--border2);border-radius:var(--radius);padding:18px;text-align:center;">
+        <div style="font-family:var(--mono);font-size:10px;color:var(--text3);letter-spacing:1px;text-transform:uppercase;margin-bottom:10px;">Recovery Key</div>
+        <div id="recovery-key-value" style="font-family:var(--mono);font-size:16px;color:var(--accent);letter-spacing:3px;word-break:break-all;line-height:2;"></div>
+      </div>
+      <button class="btn" onclick="copyRecoveryKey()" style="width:100%;justify-content:center;display:flex;align-items:center;gap:8px;">
+        📋 Copy to Clipboard
+      </button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-primary btn" onclick="confirmRecoveryKeySaved()">I have saved this key safely</button>
+    </div>
+  </div>
+</div>
+
+<!-- Settings Modal -->
+<div class="modal-overlay hidden" id="settings-modal">
+  <div class="modal" style="width:440px;">
+    <div class="modal-header">
+      <div class="modal-title">⚙ Account Settings</div>
+      <button class="modal-close" onclick="closeModal('settings-modal')">×</button>
+    </div>
+    <div class="modal-body" style="gap:14px;">
+
+      <!-- Change Password section -->
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);">Change Password</div>
+      <div class="form-field">
+        <label class="form-label">Current Password</label>
+        <input class="form-input" id="cp-current" type="password" placeholder="Your current password">
+      </div>
+      <div class="form-field">
+        <label class="form-label">New Password</label>
+        <input class="form-input" id="cp-new" type="password" placeholder="Min 8 characters">
+      </div>
+      <div class="form-field">
+        <label class="form-label">Confirm New Password</label>
+        <input class="form-input" id="cp-confirm" type="password" placeholder="Repeat new password">
+      </div>
+      <div class="auth-error" id="cp-error"></div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text3);line-height:1.6;padding:10px;background:var(--bg3);border-radius:var(--radius);">
+        🔒 All notes will be re-encrypted with your new password before the change is applied.
+      </div>
+      <button class="btn-primary btn" id="cp-save-btn" onclick="handleChangePassword()" style="width:100%;">
+        <span id="cp-save-label">Change Password</span>
+      </button>
+
+      <div class="sidebar-divider"></div>
+
+      <!-- Regenerate recovery key section -->
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text3);">Recovery Key</div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--text3);line-height:1.6;">
+        Generate a fresh recovery key. Your old key is immediately invalidated.
+      </div>
+      <button class="btn" onclick="handleRegenerateKey()" style="width:100%;">Generate New Recovery Key</button>
+
     </div>
   </div>
 </div>
@@ -1127,9 +1318,13 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // CONFIG  — change this to your live Render URL when deployed
 // ─────────────────────────────────────────────────────────────────────────────
-const API = window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1'
-  ? 'http://127.0.0.1:5000'
-  : 'https://infocord.onrender.com';
+const isRenderHost = window.location.hostname.endsWith('onrender.com');
+const isFlaskLocalHost =
+  (window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost') &&
+  window.location.port === '5000';
+const API = isRenderHost
+  ? 'https://infocord.onrender.com'
+  : (isFlaskLocalHost ? window.location.origin : 'http://127.0.0.1:5000');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CRYPTO  (Web Crypto API — runs entirely in browser)
@@ -1165,6 +1360,7 @@ const unb64 = s   => Uint8Array.from(atob(s), c => c.charCodeAt(0));
 // STATE
 // ─────────────────────────────────────────────────────────────────────────────
 let encKey      = null;   // CryptoKey — lives in memory only, never persisted
+let authToken   = null;   // Bearer token — lives in memory only, never persisted
 let currentUser = null;
 let categories  = [];
 let notes       = [];
@@ -1175,19 +1371,38 @@ let editingNoteVersion = null;
 let searchQuery = '';
 
 const COLORS = ['FF6B6B','FF9F43','FECA57','48DBFB','1DD1A1','C8F04A','A29BFE','FD79A8','636E72','74B9FF'];
+const MAX_NOTE_LINKS = 10;
 let selectedColor = COLORS[0];
+let editingCategoryId = null;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // API HELPERS
 // ─────────────────────────────────────────────────────────────────────────────
-async function apiFetch(path, opts = {}) {
-  const res = await fetch(API + path, {
-    credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...(opts.headers || {}) },
-    ...opts,
-  });
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, status: res.status, data };
+async function apiFetch(path, options = {}) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10s timeout
+    
+    try {
+        const headers = { 'Content-Type': 'application/json' };
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        const res = await fetch(API + path, {
+            credentials: 'include',
+            headers,
+            signal: controller.signal,
+            ...options,
+            // merge caller-supplied headers on top so they can still override
+            headers: { ...headers, ...(options.headers || {}) },
+        });
+        clearTimeout(timeoutId);
+        const data = await res.json();
+        return { ok: res.ok, status: res.status, data };
+    } catch (err) {
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            return { ok: false, status: 0, data: { error: 'Request timed out' } };
+        }
+        return { ok: false, status: 0, data: { error: err.message } };
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1226,10 +1441,10 @@ function showApp() {
 }
 
 window.switchAuthTab = (tab) => {
-  document.getElementById('tab-login').classList.toggle('active', tab === 'login');
-  document.getElementById('tab-signup').classList.toggle('active', tab === 'signup');
-  document.getElementById('form-login').classList.toggle('hidden', tab !== 'login');
-  document.getElementById('form-signup').classList.toggle('hidden', tab !== 'signup');
+  ['login', 'signup', 'recover'].forEach(t => {
+    document.getElementById('tab-'  + t)?.classList.toggle('active', t === tab);
+    document.getElementById('form-' + t)?.classList.toggle('hidden', t !== tab);
+  });
 };
 
 window.handleLogin = async () => {
@@ -1253,7 +1468,8 @@ window.handleLogin = async () => {
   }
 
   // Derive encryption key from password — must happen before clearing the field
-  encKey = await deriveKey(password);
+  encKey    = await deriveKey(password);
+  authToken = data.token || null;   // store Bearer token in memory
   document.getElementById('login-password').value = '';
   currentUser = data.user;
   showApp();
@@ -1278,6 +1494,12 @@ window.handleSignup = async () => {
 
   if (!ok) { errEl.textContent = data.error || 'Signup failed.'; return; }
 
+  // Show recovery key BEFORE redirect — shown exactly once
+  if (data.recovery_key) {
+    document.getElementById('recovery-key-value').textContent = data.recovery_key;
+    show('recovery-key-modal');
+  }
+
   toast('Account created! Signing you in…', 'success');
   document.getElementById('login-email').value    = email;
   document.getElementById('login-password').value = password;
@@ -1288,6 +1510,7 @@ window.handleSignup = async () => {
 window.handleLogout = async () => {
   await apiFetch('/auth/logout', { method: 'POST' });
   encKey      = null;
+  authToken   = null;
   currentUser = null;
   categories  = [];
   notes       = [];
@@ -1312,31 +1535,24 @@ async function loadNotes() {
   const { ok, data } = await apiFetch('/notes');
   if (!ok) return;
 
-  // Decrypt each note's content client-side
   notes = await Promise.all(data.map(async (n) => {
-    if (!n.content || n.content === '[Note could not be decrypted]') {
-      return { ...n, plaintext: '(encrypted — unlock by signing in)', title: 'Untitled' };
-    }
-    try {
-      let plaintext;
-      // If the server returned already-decrypted content (server-side encryption mode),
-      // use it directly. Otherwise try client-side decrypt.
-      if (encKey) {
-        try {
-          plaintext = await decryptText(encKey, n.content, n.iv);
-        } catch {
-          plaintext = n.content; // fall back to server-decrypted content
-        }
-      } else {
-        plaintext = n.content;
+    // Server returns ciphertext — decrypt client-side
+    let plaintext = '[could not decrypt]';
+
+    if (encKey && n.ciphertext && n.iv) {
+      try {
+        plaintext = await decryptText(encKey, n.ciphertext, n.iv);
+      } catch {
+        plaintext = '[decryption failed]';
       }
-      const lines  = plaintext.split('\n');
-      const title  = lines[0].replace(/^#+\s*/, '').trim() || 'Untitled';
-      const preview = lines.slice(1).join(' ').trim();
-      return { ...n, plaintext, title, preview };
-    } catch {
-      return { ...n, plaintext: n.content, title: 'Untitled', preview: '' };
     }
+
+    // First line of plaintext is the title, rest is preview
+    const lines   = plaintext.split('\n');
+    const title   = n.title || lines[0].replace(/^#+\s*/, '').trim() || 'Untitled';
+    const preview = lines.slice(1).join(' ').trim();
+
+    return { ...n, plaintext, title, preview };
   }));
 }
 
@@ -1365,8 +1581,11 @@ function renderSidebar() {
     const noteCount = notes.filter(n => n.category_id === cat.id && !n.archived).length;
     el.innerHTML = `
       <span class="cat-dot" style="background:#${cat.color}"></span>
-      ${escHtml(cat.name)}
+      <span style="flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escHtml(cat.name)}</span>
       <span class="count">${noteCount}</span>
+      <span class="sidebar-actions">
+        <button class="sidebar-action-btn" title="Rename folder" onclick="event.stopPropagation(); openEditCategoryModal('${cat.id}')">✎</button>
+      </span>
     `;
     list.appendChild(el);
   });
@@ -1467,11 +1686,13 @@ function renderNoteGrid() {
       </div>
       <div class="note-card-title">${escHtml(note.title || 'Untitled')}</div>
       <div class="note-card-preview">${escHtml(note.preview || note.plaintext?.slice(0, 120) || '')}</div>
+      ${renderLinkedNotes(note)}
       <div class="note-card-meta">
         <span class="note-card-ext">.note</span>
         <div class="note-card-actions">
           ${!note.archived ? `<button class="card-action-btn" title="Edit" onclick="event.stopPropagation();openEditNote('${note.id}')">✏</button>` : ''}
           ${!note.archived ? `<button class="card-action-btn danger" title="Archive" onclick="event.stopPropagation();archiveNote('${note.id}')">▾</button>` : ''}
+          ${note.archived ? `<button class="card-action-btn" title="Unarchive" onclick="event.stopPropagation();unarchiveNote('${note.id}')">↩</button>` : ''}
         </div>
       </div>
     `;
@@ -1504,6 +1725,36 @@ window.handleSearch = (q) => {
   renderNoteGrid();
 };
 
+function populateNoteLinksSelect(excludeNoteId = null, selectedIds = []) {
+  const sel = document.getElementById('note-links-select');
+  sel.innerHTML = '';
+  notes
+    .filter(n => !n.archived && n.id !== excludeNoteId)
+    .forEach(n => {
+      const opt = document.createElement('option');
+      opt.value = n.id;
+      opt.textContent = n.title || 'Untitled';
+      opt.selected = selectedIds.includes(n.id);
+      sel.appendChild(opt);
+    });
+}
+
+function getSelectedLinkedNoteIds() {
+  const sel = document.getElementById('note-links-select');
+  return Array.from(sel.selectedOptions).map(opt => opt.value);
+}
+
+function renderLinkedNotes(note) {
+  const ids = note.linked_note_ids || [];
+  if (!ids.length) return '';
+  const chips = ids.map(id => {
+    const linked = notes.find(n => n.id === id);
+    const label = escHtml(linked?.title || 'Linked note');
+    return `<span class="note-link-chip" title="Open linked note" onclick="event.stopPropagation();openEditNote('${id}')">↗ ${label}</span>`;
+  }).join('');
+  return `<div class="note-links-row">${chips}</div>`;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // NOTE MODAL
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1518,7 +1769,7 @@ window.openNewNoteModal = () => {
 
   // Populate category select
   const sel = document.getElementById('note-category-select');
-  sel.innerHTML = '<option value="">Select folder…</option>';
+  sel.innerHTML = '<option value="">No folder</option>';
   categories.filter(c => !c.archived).forEach(c => {
     const opt = document.createElement('option');
     opt.value = c.id;
@@ -1526,6 +1777,7 @@ window.openNewNoteModal = () => {
     sel.appendChild(opt);
   });
   if (activeCatTab) sel.value = activeCatTab;
+  populateNoteLinksSelect();
 
   show('note-modal');
   setTimeout(() => document.getElementById('note-title-input').focus(), 50);
@@ -1548,14 +1800,15 @@ window.openEditNote = (noteId) => {
   document.getElementById('note-content-input').value = lines.slice(1).join('\n').trimStart();
 
   const sel = document.getElementById('note-category-select');
-  sel.innerHTML = '<option value="">Select folder…</option>';
+  sel.innerHTML = '<option value="">No folder</option>';
   categories.filter(c => !c.archived).forEach(c => {
     const opt = document.createElement('option');
     opt.value = c.id;
     opt.textContent = c.name;
     sel.appendChild(opt);
   });
-  sel.value = note.category_id;
+  sel.value = note.category_id || '';
+  populateNoteLinksSelect(noteId, note.linked_note_ids || []);
 
   const content = document.getElementById('note-content-input').value;
   updateCharCount(document.getElementById('note-content-input'));
@@ -1563,31 +1816,41 @@ window.openEditNote = (noteId) => {
 };
 
 window.saveNote = async () => {
-  const title    = document.getElementById('note-title-input').value.trim();
-  const body     = document.getElementById('note-content-input').value;
-  const catId    = document.getElementById('note-category-select').value;
+  const title = document.getElementById('note-title-input').value.trim();
+  const body  = document.getElementById('note-content-input').value;
+  const catId = document.getElementById('note-category-select').value;
+  const linkedNoteIds = getSelectedLinkedNoteIds();
 
-  if (!title)  { toast('Please enter a title', 'error'); return; }
-  if (!catId)  { toast('Please select a folder', 'error'); return; }
+  if (!title) { toast('Please enter a title', 'error'); return; }
+  if (linkedNoteIds.length > MAX_NOTE_LINKS) {
+    toast(`You can link at most ${MAX_NOTE_LINKS} notes`, 'error');
+    return;
+  }
 
-  // Combine title + body into one plaintext string
   const plaintext = title + (body ? '\n\n' + body : '');
 
-  if (plaintext.length > 10000) { toast('Note too long (max 10,000 characters)', 'error'); return; }
+  if (plaintext.length > 10000) {
+    toast('Note too long (max 10,000 characters)', 'error');
+    return;
+  }
 
-  let content = plaintext;
-  let iv      = null;
+  if (!encKey) {
+    toast('Encryption key unavailable — please sign out and back in', 'error');
+    return;
+  }
 
-  // Client-side encrypt if key is available
-  if (encKey) {
-    try {
-      const enc = await encryptText(encKey, plaintext);
-      content = enc.ciphertext;
-      iv      = enc.iv;
-    } catch (e) {
-      toast('Encryption failed', 'error');
-      return;
-    }
+  let ciphertext, iv, saltB64;
+  try {
+    // Generate a fresh random salt per note
+    const saltBytes = crypto.getRandomValues(new Uint8Array(16));
+    saltB64 = b64(saltBytes);
+
+    const enc = await encryptText(encKey, plaintext);
+    ciphertext = enc.ciphertext;
+    iv         = enc.iv;
+  } catch (e) {
+    toast('Encryption failed', 'error');
+    return;
   }
 
   setLoading('note-save-btn', true, 'Saving…');
@@ -1596,12 +1859,28 @@ window.saveNote = async () => {
   if (editingNoteId) {
     res = await apiFetch(`/notes/${editingNoteId}`, {
       method: 'PUT',
-      body: JSON.stringify({ content, iv, category_id: catId, version: editingNoteVersion })
+      body: JSON.stringify({
+        title,
+        ciphertext,
+        iv,
+        salt:    saltB64,
+        version: editingNoteVersion,
+        category_id: catId || null,
+        linked_note_ids: linkedNoteIds,
+      })
     });
   } else {
+    const notePayload = {
+      title,
+      ciphertext,
+      iv,
+      salt: saltB64,
+      linked_note_ids: linkedNoteIds,
+    };
+    if (catId) notePayload.category_id = catId;   // omit when no folder selected
     res = await apiFetch('/notes', {
       method: 'POST',
-      body: JSON.stringify({ content, iv, category_id: catId })
+      body: JSON.stringify(notePayload)
     });
   }
 
@@ -1634,6 +1913,14 @@ window.archiveNote = async (noteId) => {
   renderAll();
 };
 
+window.unarchiveNote = async (noteId) => {
+  const { ok, data } = await apiFetch(`/notes/${noteId}/unarchive`, { method: 'PATCH' });
+  if (!ok) { toast(data.error || 'Unarchive failed', 'error'); return; }
+  toast('Note restored', 'success');
+  await loadNotes();
+  renderAll();
+};
+
 window.updateCharCount = (el) => {
   const len = el.value.length;
   const title = document.getElementById('note-title-input').value.trim();
@@ -1646,26 +1933,63 @@ window.updateCharCount = (el) => {
 // ─────────────────────────────────────────────────────────────────────────────
 // CATEGORY MODAL
 // ─────────────────────────────────────────────────────────────────────────────
+function syncColorPicker() {
+  const picker = document.getElementById('cat-color-picker');
+  if (picker) picker.value = '#' + selectedColor;
+}
+
+function setSelectedColor(hex) {
+  selectedColor = hex.toUpperCase().replace('#', '');
+  syncColorPicker();
+  document.querySelectorAll('#color-swatches .color-swatch').forEach(sw => {
+    sw.classList.toggle('selected', sw.dataset.hex === selectedColor);
+  });
+}
+
 function buildColorSwatches() {
   const container = document.getElementById('color-swatches');
   container.innerHTML = '';
   COLORS.forEach(hex => {
     const sw = document.createElement('div');
     sw.className = 'color-swatch' + (hex === selectedColor ? ' selected' : '');
+    sw.dataset.hex = hex;
     sw.style.background = '#' + hex;
     sw.title = '#' + hex;
-    sw.onclick = () => {
-      selectedColor = hex;
-      container.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('selected'));
-      sw.classList.add('selected');
-    };
+    sw.onclick = () => setSelectedColor(hex);
     container.appendChild(sw);
   });
+  syncColorPicker();
+}
+
+function initCategoryColorPicker() {
+  const picker = document.getElementById('cat-color-picker');
+  if (!picker || picker.dataset.bound) return;
+  picker.dataset.bound = '1';
+  picker.addEventListener('input', () => setSelectedColor(picker.value));
 }
 
 window.openNewCategoryModal = () => {
+  editingCategoryId = null;
+  selectedColor = COLORS[0];
+  document.querySelector('#cat-modal .modal-title').textContent = 'New Folder';
+  document.getElementById('cat-save-btn').textContent = 'Create Folder';
   document.getElementById('cat-name-input').value = '';
   buildColorSwatches();
+  initCategoryColorPicker();
+  show('cat-modal');
+  setTimeout(() => document.getElementById('cat-name-input').focus(), 50);
+};
+
+window.openEditCategoryModal = (categoryId) => {
+  const cat = categories.find(c => c.id === categoryId);
+  if (!cat) return;
+  editingCategoryId = categoryId;
+  selectedColor = cat.color;
+  document.querySelector('#cat-modal .modal-title').textContent = 'Edit Folder';
+  document.getElementById('cat-save-btn').textContent = 'Save Changes';
+  document.getElementById('cat-name-input').value = cat.name;
+  buildColorSwatches();
+  initCategoryColorPicker();
   show('cat-modal');
   setTimeout(() => document.getElementById('cat-name-input').focus(), 50);
 };
@@ -1674,14 +1998,18 @@ window.saveCategory = async () => {
   const name = document.getElementById('cat-name-input').value.trim();
   if (!name) { toast('Folder name required', 'error'); return; }
 
-  const { ok, data } = await apiFetch('/categories', {
-    method: 'POST',
-    body: JSON.stringify({ name, color: selectedColor })
-  });
+  const payload = { name, color: selectedColor };
+  const { ok, data } = editingCategoryId
+    ? await apiFetch(`/categories/${editingCategoryId}`, { method: 'PUT', body: JSON.stringify(payload) })
+    : await apiFetch('/categories', { method: 'POST', body: JSON.stringify(payload) });
 
-  if (!ok) { toast(data.error || 'Failed to create folder', 'error'); return; }
+  if (!ok) {
+    toast(data.error || `Failed to ${editingCategoryId ? 'update' : 'create'} folder`, 'error');
+    return;
+  }
 
-  toast(`Folder "${name}" created`, 'success');
+  toast(editingCategoryId ? `Folder "${name}" updated` : `Folder "${name}" created`, 'success');
+  editingCategoryId = null;
   closeModal('cat-modal');
   await loadCategories();
   renderAll();
@@ -1752,8 +2080,178 @@ document.getElementById('login-password').addEventListener('keydown', e => {
 document.getElementById('signup-password').addEventListener('keydown', e => {
   if (e.key === 'Enter') handleSignup();
 });
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 5 — RECOVERY KEY DISPLAY & ACCOUNT RECOVERY
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Called when user clicks "Copy to Clipboard" inside recovery key modal
+window.copyRecoveryKey = () => {
+  const key = document.getElementById('recovery-key-value').textContent;
+  if (!key) return;
+  navigator.clipboard.writeText(key)
+    .then(() => toast('Recovery key copied!', 'success'))
+    .catch(() => toast('Copy failed — please copy it manually', 'error'));
+};
+
+// Called when user clicks "I have saved this key"
+window.confirmRecoveryKeySaved = () => {
+  document.getElementById('recovery-key-value').textContent = '';
+  hide('recovery-key-modal');
+  toast('Recovery key saved. Keep it somewhere safe!', 'success');
+};
+
+// Regenerate a new recovery key (invalidates old one)
+window.handleRegenerateKey = async () => {
+  if (!confirm('This will permanently invalidate your current recovery key. Continue?')) return;
+
+  const { ok, data } = await apiFetch('/auth/recovery-key', { method: 'POST' });
+  if (!ok) { toast(data.error || 'Failed to generate recovery key', 'error'); return; }
+
+  document.getElementById('recovery-key-value').textContent = data.recovery_key;
+  closeModal('settings-modal');
+  show('recovery-key-modal');
+};
+
+// Recover account via recovery key (on the auth screen)
+window.handleRecover = async () => {
+  const email      = document.getElementById('recover-email').value.trim();
+  const recKey     = document.getElementById('recover-key').value.trim();
+  const newPass    = document.getElementById('recover-newpass').value;
+  const errEl      = document.getElementById('recover-error');
+  errEl.textContent = '';
+
+  if (!email || !recKey || !newPass) {
+    errEl.textContent = 'All fields are required.';
+    return;
+  }
+  if (newPass.length < 8) {
+    errEl.textContent = 'New password must be at least 8 characters.';
+    return;
+  }
+
+  const { ok, data } = await apiFetch('/auth/recover', {
+    method: 'POST',
+    body: JSON.stringify({ email, recovery_key: recKey, new_password: newPass })
+  });
+
+  if (!ok) {
+    errEl.textContent = data.error || 'Recovery failed.';
+    return;
+  }
+
+  toast('Password reset! Sign in with your new password.', 'success');
+  document.getElementById('login-email').value = email;
+  switchAuthTab('login');
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 6 — SETTINGS MODAL & PASSWORD CHANGE
+// ─────────────────────────────────────────────────────────────────────────────
+
+window.openSettingsModal = () => {
+  // Clear all fields every time the modal opens
+  ['cp-current', 'cp-new', 'cp-confirm'].forEach(id => {
+    document.getElementById(id).value = '';
+  });
+  document.getElementById('cp-error').textContent = '';
+  show('settings-modal');
+};
+
+window.handleChangePassword = async () => {
+  const currentPass = document.getElementById('cp-current').value;
+  const newPass     = document.getElementById('cp-new').value;
+  const confirmPass = document.getElementById('cp-confirm').value;
+  const errEl       = document.getElementById('cp-error');
+  errEl.textContent = '';
+
+  // Client-side validation
+  if (!currentPass || !newPass || !confirmPass) {
+    errEl.textContent = 'All three fields are required.'; return;
+  }
+  if (newPass.length < 8) {
+    errEl.textContent = 'New password must be at least 8 characters.'; return;
+  }
+  if (newPass !== confirmPass) {
+    errEl.textContent = 'New passwords do not match.'; return;
+  }
+  if (currentPass === newPass) {
+    errEl.textContent = 'New password must differ from your current password.'; return;
+  }
+  if (!encKey) {
+    errEl.textContent = 'Encryption key not available — please sign out and back in.'; return;
+  }
+
+  document.getElementById('cp-save-btn').disabled = true;
+  document.getElementById('cp-save-label').textContent = 'Re-encrypting notes…';
+
+  try {
+    // 1. Derive brand new AES key from new password
+    const newKey = await deriveKey(newPass);
+
+    // 2. Re-encrypt every active (non-archived) note with the new key
+    const activeNotes = notes.filter(n => !n.archived && n.ciphertext && n.iv);
+    const reEncrypted = [];
+
+    for (const n of activeNotes) {
+      // Decrypt with current in-memory key
+      let plaintext;
+      try {
+        plaintext = await decryptText(encKey, n.ciphertext, n.iv);
+      } catch {
+        errEl.textContent = `Could not decrypt note "${n.title || n.id}". Aborting.`;
+        return;
+      }
+
+      // Re-encrypt with new key + fresh salt + fresh IV
+      const saltBytes              = crypto.getRandomValues(new Uint8Array(16));
+      const saltB64                = b64(saltBytes);
+      const { ciphertext, iv }     = await encryptText(newKey, plaintext);
+
+      reEncrypted.push({
+        id:         n.id,
+        ciphertext,
+        iv,
+        salt:       saltB64,
+        version:    n.version        // server validates this to prevent mid-flight races
+      });
+    }
+
+    // 3. Send old password + new password + all re-encrypted notes in one atomic request
+    const { ok, data } = await apiFetch('/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({
+        old_password: currentPass,
+        new_password: newPass,
+        notes:        reEncrypted
+      })
+    });
+
+    if (!ok) {
+      errEl.textContent = data.error || 'Password change failed.';
+      return;
+    }
+
+    // 4. Swap in-memory key — session continues without re-login
+    encKey = newKey;
+
+    closeModal('settings-modal');
+    toast(`Password changed. ${reEncrypted.length} note(s) re-encrypted.`, 'success');
+    await loadNotes();
+    renderAll();
+
+  } finally {
+    document.getElementById('cp-save-btn').disabled = false;
+    document.getElementById('cp-save-label').textContent = 'Change Password';
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STEP 7 — CORS + /app ROUTE  (handled in run.py — no JS needed)
+// This comment is intentional documentation.
+// CORS origins: http://127.0.0.1:5000 and https://infocord.onrender.com
+// Frontend served at GET /app via Flask render_template('index.html')
+// ─────────────────────────────────────────────────────────────────────────────
+
 </script>
 </body>
 </html>
-HTMLEOF
-echo "index.html written"

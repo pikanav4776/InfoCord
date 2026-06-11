@@ -1,20 +1,104 @@
-(.venv) PS C:\InfoCord> Get-ChildItem -Recurse -Filter "*.py" | Select-String "def create_note|def add_note|POST.*notes"
+"""
+Let me read the notes.txt file to see the full picture:Reading the notes.txt fileReading the notes.txt fileI have everything I need. Here's the full picture:
+Current state: The backend encrypts with encrypt_note(content) server-side and stores ciphertext in the content column plus iv in the iv column. There's no salt column because server-side encryption uses a fixed key (no per-note salt needed).
+What needs to change: The client sends pre-encrypted {ciphertext, iv, salt} and the server just stores it — no more calling encrypt_note/decrypt_note in routes.
 
-run.py:506:def create_note():
-test_auth.py:76:    res = client.post("/notes", json={"category_id": category_id, "content": content})
-test_auth.py:257:        res = client.post("/notes", json={"category_id": "not-a-uuid", "content": "x"})
-test_auth.py:309:        res = client.post("/notes", json={"category_id": cat_id, "content": "new note"})
-test_auth.py:386:        res = client.post("/notes", json={"category_id": cat_id, "content": 12345})
-test_auth.py:399:        res = client.post("/notes", data="not json", content_type="text/plain")
-test_auth.py:604:        assert client.post("/notes", json={"category_id": cat_id, "content": "hi"}).status_code == 201
-test_auth.py:609:        res = client.post("/notes", json={"category_id": cat_id, "content": "my secret"})
-test_auth.py:613:        assert client.post("/notes", json={"category_id": "x", "content": "y"}).status_code == 401
-test_auth.py:617:        assert client.post("/notes", json={"content": "orphan"}).status_code == 400
-test_auth.py:622:        assert client.post("/notes", json={"category_id": cat_id, "content": "a" * 10001}).status_code == 400
-test_auth.py:627:        client.post("/notes", json={"category_id": cat_id, "content": "decrypted content"})
-test_auth.py:635:        client.post("/notes", json={"category_id": cat_id, "content": plaintext})
-test_auth.py:645:            client.post("/notes", json={"category_id": cat_id, "content": c})
-test_auth.py:652:        client.post("/notes", json={"category_id": cat_id, "content": "private"})
-test_auth.py:700:        res = client.post("/notes", json={
-test_auth.py:715:        res = client.post("/notes", json={"category_id": cat_id, "content": "v1"})
-test_auth.py:721:        client.post("/notes", json={"category_id": cat_id, "content": "versioned"})
+Changes needed
+1. Add salt column to the Note model
+In run.py find your Note model (around line 729) and add the salt column:
+python# Find this:
+content = db.Column(db.Text)          # base64 ciphertext — never plaintext
+iv      = db.Column(db.String(64))
+
+# Add salt below iv:
+salt    = db.Column(db.String(64))
+Then create and run a migration:
+powershellflask db migrate -m "add salt to notes"
+flask db upgrade
+2. Update POST /notes route (around line 506)
+python@app.route("/notes", methods=["POST"])
+@require_login
+def create_note():
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "JSON body required"}), 400
+
+    category_id = data.get("category_id")
+    ciphertext  = data.get("ciphertext", "")
+    iv          = data.get("iv", "")
+    salt        = data.get("salt", "")
+    title       = data.get("title", "")
+
+    if not category_id:
+        return jsonify({"error": "category_id is required"}), 400
+    if not ciphertext or not iv or not salt:
+        return jsonify({"error": "ciphertext, iv, and salt are required"}), 400
+
+    cat_uuid, err = parse_uuid(category_id, "category_id")
+    if err:
+        return err
+
+    category = db.session.get(Category, cat_uuid)
+    if not category or category.user_id != current_user().id:
+        return jsonify({"error": "Category not found"}), 404
+    if category.archived:
+        return jsonify({"error": "Cannot add note to archived category"}), 409
+
+    note = Note(
+        user_id     = current_user().id,
+        category_id = cat_uuid,
+        content     = ciphertext,
+        iv          = iv,
+        salt        = salt,
+        title       = title,
+        version     = 1,
+    )
+    db.session.add(note)
+
+    if (err := db_commit("create_note")):
+        return err
+
+    return jsonify({"id": str(note.id), "version": note.version}), 201
+3. Update GET /notes route (around line 560)
+Remove the decrypt_note call — just return the raw ciphertext fields:
+python# Remove this:
+plaintext = decrypt_note(n.content, n.iv)
+
+# Return this instead:
+{
+    "id":          str(n.id),
+    "title":       n.title,
+    "ciphertext":  n.content,
+    "iv":          n.iv,
+    "salt":        n.salt,
+    "category_id": str(n.category_id) if n.category_id else None,
+    "archived":    n.archived,
+    "version":     n.version,
+    "created_at":  n.created_at.isoformat(),
+    "updated_at":  n.updated_at.isoformat(),
+}
+4. Update PUT /notes/<id> route (around line 595)
+Same pattern — accept ciphertext/iv/salt, remove server-side encrypt/decrypt:
+pythonciphertext = data.get("ciphertext", "")
+iv         = data.get("iv", "")
+salt       = data.get("salt", "")
+
+if not ciphertext or not iv or not salt:
+    return jsonify({"error": "ciphertext, iv, and salt are required"}), 400
+
+# Remove: ciphertext, iv = encrypt_note(content)
+# Replace with direct assignment:
+note.content = ciphertext
+note.iv      = iv
+note.salt    = salt
+
+After making these changes
+powershell# Run your tests — they will break (expected, since API contract changed)
+pytest
+
+# Then push to GitHub
+git add .
+git commit -m "move encryption to client-side"
+git push origin main
+The test failures are expected — your tests currently send content as plaintext and expect the server to encrypt it. Once the frontend is built those tests will need updating to send pre-encrypted payloads. For now, the backend changes are what matter for the privacy model.
+"""
