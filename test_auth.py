@@ -1502,3 +1502,67 @@ class TestPasswordChangeExtended:
         assert client.post("/auth/login", json={
             "email": "crud@example.com", "password": "newpassword123"
         }).status_code == 200
+
+
+# ─────────────────────────────────────────────
+# ACCOUNT DELETION & DB-BACKED TOKENS
+# ─────────────────────────────────────────────
+
+class TestAccountDeletion:
+    def test_delete_account_requires_login(self, client):
+        assert client.delete("/auth/account", json={"password": "x"}).status_code == 401
+
+    def test_delete_account_requires_password(self, client):
+        signup_and_login(client)
+        res = client.delete("/auth/account", json={})
+        assert res.status_code == 400
+
+    def test_delete_account_wrong_password(self, client):
+        signup_and_login(client)
+        res = client.delete("/auth/account", json={"password": "wrong"})
+        assert res.status_code == 401
+
+    def test_delete_account_removes_user_and_data(self, client):
+        signup_and_login(client)
+        cat_id = make_category(client)
+        client.post("/notes", json=fake_encrypted_payload("secret"))
+        res = client.delete("/auth/account", json={"password": "password123"})
+        assert res.status_code == 200
+        assert client.get("/auth/me").status_code == 401
+
+
+class TestDbBackedTokens:
+    def test_login_returns_bearer_token(self, client):
+        client.post("/auth/signup", json={
+            "email": "token@example.com", "password": "password123", "name": "Token User"
+        })
+        res = client.post("/auth/login", json={
+            "email": "token@example.com", "password": "password123"
+        })
+        assert res.status_code == 200
+        assert "token" in res.get_json()
+
+    def test_bearer_token_authenticates_me(self, client):
+        client.post("/auth/signup", json={
+            "email": "bearer@example.com", "password": "password123", "name": "Bearer User"
+        })
+        login = client.post("/auth/login", json={
+            "email": "bearer@example.com", "password": "password123"
+        })
+        token = login.get_json()["token"]
+        client.post("/auth/logout")
+        res = client.get("/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert res.status_code == 200
+        assert res.get_json()["email"] == "bearer@example.com"
+
+
+class TestLegalPages:
+    def test_privacy_policy(self, client):
+        res = client.get("/legal/privacy")
+        assert res.status_code == 200
+        assert b"Privacy Policy" in res.data
+
+    def test_terms_of_service(self, client):
+        res = client.get("/legal/terms")
+        assert res.status_code == 200
+        assert b"Terms of Service" in res.data

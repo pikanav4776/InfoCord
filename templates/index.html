@@ -1056,6 +1056,11 @@
       🔒 Your notes are encrypted in your browser before they reach our servers. We cannot read your data.
       <br><br>Your password <strong>is</strong> your encryption key — it cannot be recovered if lost.
     </div>
+    <div style="text-align:center;margin-top:20px;font-family:var(--mono);font-size:11px;color:var(--text3);">
+      <a href="/legal/privacy" target="_blank" rel="noopener" style="color:var(--text2);text-decoration:none;">Privacy Policy</a>
+      &nbsp;·&nbsp;
+      <a href="/legal/terms" target="_blank" rel="noopener" style="color:var(--text2);text-decoration:none;">Terms of Service</a>
+    </div>
   </div>
 </div>
 
@@ -1307,6 +1312,55 @@
       </div>
       <button class="btn" onclick="handleRegenerateKey()" style="width:100%;">Generate New Recovery Key</button>
 
+      <div class="sidebar-divider"></div>
+
+      <!-- Delete account (App Store requirement) -->
+      <div style="font-family:var(--mono);font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--danger);">Danger Zone</div>
+      <div style="font-family:var(--mono);font-size:11px;color:var(--text3);line-height:1.6;">
+        Permanently delete your account and all encrypted notes. This cannot be undone.
+      </div>
+      <div class="form-field">
+        <label class="form-label">Confirm Password</label>
+        <input class="form-input" id="delete-password" type="password" placeholder="Enter password to confirm">
+      </div>
+      <div class="auth-error" id="delete-error"></div>
+      <button class="btn" onclick="handleDeleteAccount()" style="width:100%;border-color:var(--danger);color:var(--danger);">Delete Account</button>
+
+      <div class="sidebar-divider"></div>
+      <div style="font-family:var(--mono);font-size:10px;color:var(--text3);text-align:center;">
+        <a href="/legal/privacy" target="_blank" rel="noopener" style="color:var(--text2);">Privacy</a>
+        &nbsp;·&nbsp;
+        <a href="/legal/terms" target="_blank" rel="noopener" style="color:var(--text2);">Terms</a>
+      </div>
+
+    </div>
+  </div>
+</div>
+
+<!-- Version Conflict Modal -->
+<div class="modal-overlay hidden" id="conflict-modal">
+  <div class="modal" style="width:520px;">
+    <div class="modal-header">
+      <div class="modal-title">⚠ Version Conflict</div>
+      <button class="modal-close" onclick="closeModal('conflict-modal')">×</button>
+    </div>
+    <div class="modal-body" style="gap:14px;">
+      <p style="font-family:var(--mono);font-size:12px;color:var(--text2);line-height:1.6;">
+        This note was changed elsewhere (another tab, device, or session) while you were editing.
+        Choose which version to keep.
+      </p>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px;">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--accent);margin-bottom:8px;">YOUR VERSION</div>
+          <div id="conflict-local-preview" style="font-size:13px;color:var(--text2);max-height:120px;overflow:auto;white-space:pre-wrap;"></div>
+        </div>
+        <div style="background:var(--bg3);border:1px solid var(--border);border-radius:var(--radius);padding:12px;">
+          <div style="font-family:var(--mono);font-size:10px;color:var(--text3);margin-bottom:8px;">SERVER VERSION</div>
+          <div id="conflict-server-preview" style="font-size:13px;color:var(--text2);max-height:120px;overflow:auto;white-space:pre-wrap;"></div>
+        </div>
+      </div>
+      <button class="btn-primary btn" onclick="resolveConflict('local')" style="width:100%;">Keep My Version</button>
+      <button class="btn" onclick="resolveConflict('server')" style="width:100%;">Use Server Version</button>
     </div>
   </div>
 </div>
@@ -1368,6 +1422,7 @@ let activeFilter = 'all';    // 'all' | 'recent' | 'starred' | 'archived' | cate
 let activeCatTab = null;
 let editingNoteId = null;
 let editingNoteVersion = null;
+let pendingConflict = null;  // holds save payload when a 409 conflict occurs
 let searchQuery = '';
 
 const COLORS = ['FF6B6B','FF9F43','FECA57','48DBFB','1DD1A1','C8F04A','A29BFE','FD79A8','636E72','74B9FF'];
@@ -1886,6 +1941,14 @@ window.saveNote = async () => {
 
   setLoading('note-save-btn', false, editingNoteId ? 'Save Changes' : 'Save Note');
 
+  if (res.status === 409 && editingNoteId) {
+    setLoading('note-save-btn', false, 'Save Changes');
+    await showConflictModal(editingNoteId, plaintext, {
+      title, ciphertext, iv, salt: saltB64, catId, linkedNoteIds
+    });
+    return;
+  }
+
   if (res.status === 409) {
     toast('Version conflict — refreshing notes…', 'error');
     await loadNotes();
@@ -2149,12 +2212,115 @@ window.handleRecover = async () => {
 // ─────────────────────────────────────────────────────────────────────────────
 
 window.openSettingsModal = () => {
-  // Clear all fields every time the modal opens
-  ['cp-current', 'cp-new', 'cp-confirm'].forEach(id => {
+  ['cp-current', 'cp-new', 'cp-confirm', 'delete-password'].forEach(id => {
     document.getElementById(id).value = '';
   });
   document.getElementById('cp-error').textContent = '';
+  document.getElementById('delete-error').textContent = '';
   show('settings-modal');
+};
+
+async function showConflictModal(noteId, localPlaintext, payload) {
+  const { ok, data } = await apiFetch(`/notes/${noteId}`);
+  if (!ok) {
+    toast('Could not load server version', 'error');
+    return;
+  }
+
+  let serverPlaintext = '[could not decrypt]';
+  try {
+    serverPlaintext = await decryptText(encKey, data.ciphertext, data.iv);
+  } catch (_) {
+    serverPlaintext = '[decryption failed]';
+  }
+
+  pendingConflict = { noteId, payload, serverVersion: data.version, serverNote: data };
+
+  document.getElementById('conflict-local-preview').textContent =
+    localPlaintext.slice(0, 500) + (localPlaintext.length > 500 ? '…' : '');
+  document.getElementById('conflict-server-preview').textContent =
+    serverPlaintext.slice(0, 500) + (serverPlaintext.length > 500 ? '…' : '');
+
+  show('conflict-modal');
+}
+
+window.resolveConflict = async (choice) => {
+  if (!pendingConflict) return;
+  const { noteId, payload, serverVersion } = pendingConflict;
+  closeModal('conflict-modal');
+
+  if (choice === 'server') {
+    pendingConflict = null;
+    toast('Using server version', 'info');
+    closeModal('note-modal');
+    await loadNotes();
+    renderAll();
+    return;
+  }
+
+  // Keep local version: re-PUT with the server's current version number
+  setLoading('note-save-btn', true, 'Saving…');
+  const res = await apiFetch(`/notes/${noteId}`, {
+    method: 'PUT',
+    body: JSON.stringify({
+      title: payload.title,
+      ciphertext: payload.ciphertext,
+      iv: payload.iv,
+      salt: payload.salt,
+      version: serverVersion,
+      category_id: payload.catId || null,
+      linked_note_ids: payload.linkedNoteIds,
+    })
+  });
+  setLoading('note-save-btn', false, 'Save Changes');
+  pendingConflict = null;
+
+  if (res.status === 409) {
+    toast('Still conflicting — please try again', 'error');
+    await loadNotes();
+    renderAll();
+    return;
+  }
+  if (!res.ok) {
+    toast(res.data.error || 'Save failed', 'error');
+    return;
+  }
+
+  toast('Your version saved', 'success');
+  closeModal('note-modal');
+  await loadNotes();
+  renderAll();
+};
+
+window.handleDeleteAccount = async () => {
+  const password = document.getElementById('delete-password').value;
+  const errEl = document.getElementById('delete-error');
+  errEl.textContent = '';
+
+  if (!password) {
+    errEl.textContent = 'Enter your password to confirm deletion.';
+    return;
+  }
+  if (!confirm('Delete your account and ALL notes permanently? This cannot be undone.')) return;
+
+  const { ok, data } = await apiFetch('/auth/account', {
+    method: 'DELETE',
+    body: JSON.stringify({ password })
+  });
+
+  if (!ok) {
+    errEl.textContent = data.error || 'Account deletion failed.';
+    return;
+  }
+
+  encKey = null;
+  authToken = null;
+  currentUser = null;
+  notes = [];
+  categories = [];
+  closeModal('settings-modal');
+  toast('Account deleted', 'info');
+  showAuth();
 };
 
 window.handleChangePassword = async () => {

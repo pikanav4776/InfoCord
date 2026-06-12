@@ -2,22 +2,17 @@ import logging
 import os
 import re
 import uuid
+import hashlib
 from datetime import datetime, timedelta
 from functools import wraps
 import secrets
-
-# ── In-memory session tokens (Bearer auth) ────────────────────────────────────
-# Lets the browser send an Authorization: Bearer <token> header instead of
-# relying on SameSite=Lax cookies, which are blocked on cross-origin POST
-# requests (e.g. when the HTML is opened from file:// or a different port).
-_active_tokens: dict = {}   # token_str → user_id_str
 
 from flask import Flask, request, jsonify, session, g, render_template, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.exc import SQLAlchemyError
-from flask_limiter import Limiter
+from sqlalchemy import or_
 from werkzeug.security import generate_password_hash, check_password_hash
 
 from dotenv import load_dotenv
@@ -38,6 +33,7 @@ MAX_CATEGORY_NAME         = 120
 MAX_NOTE_LINKS            = 10
 MAX_FAILED_ATTEMPTS       = 5
 LOCKOUT_DURATION_MINUTES  = 15
+TOKEN_EXPIRY_DAYS         = 7
 
 app = Flask(__name__)
 CORS(
@@ -55,8 +51,8 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False # optimization
 app.config['SESSION_COOKIE_HTTPONLY']     = True #
 app.config['SESSION_COOKIE_SECURE']       = os.getenv("FLASK_ENV") == "production" # Cookie only sent over HTTPS in production
 app.config['SESSION_COOKIE_SAMESITE']     = 'Lax'
-app.config['PERMANENT_SESSION_LIFETIME']  = timedelta(days=7)
-app.config["RATELIMIT_ENABLED"]           = os.getenv("FLASK_ENV") == "production" # 
+app.config['PERMANENT_SESSION_LIFETIME']  = timedelta(days=TOKEN_EXPIRY_DAYS)
+app.config["RATELIMIT_ENABLED"]           = False  # auth rate limits use PostgreSQL buckets
 
 
 def normalize_db_url(url: str) -> str:
@@ -112,22 +108,71 @@ logger = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────
-# DB / MIGRATE / LIMITER
+# DB / MIGRATE
 # ─────────────────────────────────────────────
 
 db      = SQLAlchemy()
-migrate = Migrate() # what does migrate do? it is used to migrate the database to the latest version
+migrate = Migrate()
 
 db.init_app(app)
 migrate.init_app(app, db)
+
+
+def _hash_token(raw_token: str) -> str:
+    return hashlib.sha256(raw_token.encode()).hexdigest()
+
+
+def create_auth_token(user_id) -> str:
+    """Issue a Bearer token persisted in PostgreSQL (safe across workers/restarts)."""
+    purge_expired_auth_tokens()
+    raw_token = secrets.token_urlsafe(32)
+    db.session.add(AuthToken(
+        token_hash=_hash_token(raw_token),
+        user_id=user_id,
+        expires_at=datetime.now() + timedelta(days=TOKEN_EXPIRY_DAYS),
+    ))
+    db.session.commit()
+    return raw_token
+
+
+def resolve_auth_token(raw_token: str):
+    if not raw_token:
+        return None
+    row = db.session.get(AuthToken, _hash_token(raw_token))
+    if not row or row.expires_at < datetime.now():
+        if row:
+            db.session.delete(row)
+            db.session.commit()
+        return None
+    return row.user_id
+
+
+def revoke_auth_token(raw_token: str) -> None:
+    if not raw_token:
+        return
+    row = db.session.get(AuthToken, _hash_token(raw_token))
+    if row:
+        db.session.delete(row)
+        db.session.commit()
+
+
+def revoke_all_user_tokens(user_id) -> None:
+    AuthToken.query.filter_by(user_id=user_id).delete()
+    db.session.commit()
+
+
+def purge_expired_auth_tokens() -> None:
+    AuthToken.query.filter(AuthToken.expires_at < datetime.now()).delete()
+    db.session.commit()
+
 
 def rate_limit_key() -> str:
     """Rate-limit by account identity — never by client IP."""
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        user_id_str = _active_tokens.get(auth_header[7:])
-        if user_id_str:
-            return f"user:{user_id_str}"
+        user_id = resolve_auth_token(auth_header[7:])
+        if user_id:
+            return f"user:{user_id}"
     if session.get("logged_in") and session.get("user_id"):
         return f"user:{session['user_id']}"
     data = request.get_json(silent=True) or {}
@@ -137,12 +182,56 @@ def rate_limit_key() -> str:
     return "anon"
 
 
-limiter = Limiter(
-    key_func=rate_limit_key,
-    app=app,
-    default_limits=[],
-    storage_uri="memory://",
-)
+def _window_start(now: datetime, window_seconds: int) -> datetime:
+    if window_seconds <= 60:
+        return now.replace(second=0, microsecond=0)
+    if window_seconds <= 3600:
+        return now.replace(minute=0, second=0, microsecond=0)
+    epoch = int(now.timestamp())
+    return datetime.fromtimestamp(epoch - (epoch % window_seconds))
+
+
+def _allow_db_rate_limit(scope: str, max_count: int, window_seconds: int) -> bool:
+    """Fixed-window rate limit backed by PostgreSQL (multi-worker safe)."""
+    window_start = _window_start(datetime.now(), window_seconds)
+
+    bucket = RateLimitBucket.query.filter_by(
+        bucket_key=scope,
+        window_start=window_start,
+    ).first()
+
+    if not bucket:
+        db.session.add(RateLimitBucket(bucket_key=scope, window_start=window_start, count=1))
+        db.session.commit()
+        return True
+
+    if bucket.count >= max_count:
+        return False
+
+    bucket.count += 1
+    db.session.commit()
+    return True
+
+
+def db_rate_limit(*rules):
+    """
+    Decorator: db_rate_limit((5, 60), (20, 3600))  → 5/min and 20/hour.
+    Each rule is (max_count, window_seconds).
+    """
+    def decorator(f):
+        @wraps(f)
+        def wrapper(*args, **kwargs):
+            if app.config.get("TESTING") or os.getenv("FLASK_ENV") != "production":
+                return f(*args, **kwargs)
+            identity = rate_limit_key()
+            for max_count, window_seconds in rules:
+                scope = f"{request.endpoint}:{identity}:{window_seconds}"
+                if not _allow_db_rate_limit(scope, max_count, window_seconds):
+                    logger.warning(f"429 Rate Limited: {request.path} scope={scope}")
+                    return jsonify({"error": "Too many requests. Please slow down."}), 429
+            return f(*args, **kwargs)
+        return wrapper
+    return decorator
 
 
 # ─────────────────────────────────────────────
@@ -245,11 +334,10 @@ def require_login(f):
         auth_header = request.headers.get("Authorization", "")
         if auth_header.startswith("Bearer "):
             token = auth_header[7:]
-            user_id_str = _active_tokens.get(token)
-            if user_id_str:
-                # Populate session so current_user() keeps working unchanged
+            user_id = resolve_auth_token(token)
+            if user_id:
                 session["logged_in"] = True
-                session["user_id"]   = user_id_str
+                session["user_id"]   = str(user_id)
                 return f(*args, **kwargs)
         # ── Cookie session fallback (same-origin / Render) ──────────────────
         if not session.get("logged_in"):
@@ -349,6 +437,16 @@ def frontend():
     return content, 200, {'Content-Type': 'text/html'}
 
 
+@app.route("/legal/privacy")
+def privacy_policy():
+    return render_template("legal/privacy.html")
+
+
+@app.route("/legal/terms")
+def terms_of_service():
+    return render_template("legal/terms.html")
+
+
 @app.route("/health")
 def health():
     try:
@@ -368,7 +466,7 @@ def health():
 # ─────────────────────────────────────────────
 
 @app.route("/auth/signup", methods=["POST"])
-@limiter.limit("10 per hour")
+@db_rate_limit((10, 3600))
 def signup():
     """ Acquires the user's email, password, and name from the request body, and creates a new user in the database."""
     data = request.get_json(silent=True)
@@ -420,7 +518,7 @@ def signup():
 
 
 @app.route("/auth/login", methods=["POST"])
-@limiter.limit("20 per hour; 5 per minute") # why did we set these limits? to prevent brute force attacks
+@db_rate_limit((5, 60), (20, 3600))
 def login():
     data = request.get_json(silent=True)
 
@@ -462,8 +560,7 @@ def login():
 
     # Also issue a Bearer token so cross-origin (file://) clients can
     # authenticate without relying on SameSite cookies.
-    bearer_token = secrets.token_urlsafe(32) # what is this? a token for the user to authenticate with
-    _active_tokens[bearer_token] = str(user.id) # what is this? a dictionary to store the user's token
+    bearer_token = create_auth_token(user.id)
 
     logger.info(f"User logged in: {email}")
     return jsonify({
@@ -481,7 +578,7 @@ def logout():
     # Revoke Bearer token if present
     auth_header = request.headers.get("Authorization", "")
     if auth_header.startswith("Bearer "):
-        _active_tokens.pop(auth_header[7:], None)
+        revoke_auth_token(auth_header[7:])
     session.clear()
     return jsonify({"message": "Logged out successfully"}), 200
 
@@ -499,7 +596,7 @@ def me(): # why'd we call this me? because it is the user's own information
     return jsonify({"id": str(user.id), "email": user.email, "name": user.name})
 
 @app.route("/auth/recover", methods=["POST"])
-@limiter.limit("5 per hour")
+@db_rate_limit((5, 3600))
 def recover_account():
     data = request.get_json(silent=True)
     if not data:
@@ -630,6 +727,51 @@ def regenerate_recovery_key():
         "recovery_key": raw_recovery_key,
         "message":      "Store this key somewhere safe. It will not be shown again."
     }), 200
+
+
+@app.route("/auth/account", methods=["DELETE"])
+@require_login
+def delete_account():
+    """Permanently delete the authenticated user's account and all associated data."""
+    user = current_user()
+    if not user:
+        return jsonify({"error": "User account not found"}), 404
+
+    data = request.get_json(silent=True) or {}
+    password = data.get("password", "")
+    if not password:
+        return jsonify({"error": "password is required to confirm account deletion"}), 400
+
+    if not check_password_hash(user.password_hash, password):
+        return jsonify({"error": "Invalid password"}), 401
+
+    email = user.email
+    user_id = user.id
+
+    note_ids = [row.id for row in Note.query.filter_by(user_id=user_id).all()]
+    if note_ids:
+        NoteLink.query.filter(
+            db.or_(
+                NoteLink.source_note_id.in_(note_ids),
+                NoteLink.target_note_id.in_(note_ids),
+            )
+        ).delete(synchronize_session=False)
+        Note.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+
+    Category.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    AuthToken.query.filter_by(user_id=user_id).delete(synchronize_session=False)
+    db.session.delete(user)
+
+    if (err := db_commit("delete_account")):
+        return err
+
+    auth_header = request.headers.get("Authorization", "")
+    if auth_header.startswith("Bearer "):
+        revoke_auth_token(auth_header[7:])
+    session.clear()
+
+    logger.info(f"Account deleted: {email}")
+    return jsonify({"message": "Account and all associated data have been permanently deleted."}), 200
 
 
 # ─────────────────────────────────────────────
@@ -1004,6 +1146,28 @@ class NoteLink(db.Model):
 
     source_note_id = db.Column(UUID(as_uuid=True), db.ForeignKey('notes.id', ondelete='CASCADE'), primary_key=True)
     target_note_id = db.Column(UUID(as_uuid=True), db.ForeignKey('notes.id', ondelete='CASCADE'), primary_key=True)
+
+
+class AuthToken(db.Model):
+    __tablename__ = 'auth_tokens'
+
+    token_hash = db.Column(db.String(64), primary_key=True)
+    user_id    = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.now)
+
+
+class RateLimitBucket(db.Model):
+    __tablename__ = 'rate_limit_buckets'
+
+    id           = db.Column(db.Integer, primary_key=True, autoincrement=True)
+    bucket_key   = db.Column(db.String(255), nullable=False, index=True)
+    window_start = db.Column(db.DateTime, nullable=False)
+    count        = db.Column(db.Integer, nullable=False, default=0)
+
+    __table_args__ = (
+        db.UniqueConstraint('bucket_key', 'window_start', name='uq_rate_limit_bucket_window'),
+    )
 
 
 if __name__ == "__main__":

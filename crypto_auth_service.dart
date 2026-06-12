@@ -22,7 +22,7 @@ class CryptoAuthService {
     final pbkdf2 = Pbkdf2(
       macAlgorithm: Hmac(Sha256()),
       bits: 256,
-      iterations: 600000, // Match the exact iterations used on Web Crypto
+      iterations: 310000, // Match web client (templates/index.html)
     );
 
     return await pbkdf2.deriveKeyFromPassword(
