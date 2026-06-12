@@ -146,7 +146,7 @@ limiter = Limiter(
 
 
 # ─────────────────────────────────────────────
-# REQUEST LIFECYCLE HOOKS
+# REQUEST LIFECYCLE HOOKS 
 # ─────────────────────────────────────────────
 
 @app.before_request
