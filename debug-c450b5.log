@@ -1,4 +1,0 @@
-{"sessionId": "c450b5", "runId": "pre-migrate", "hypothesisId": "C", "location": "scripts/gate_a_migrate.py", "message": "preflight_failed", "data": {"error": "ModuleNotFoundError", "detail": "No module named 'run'"}, "timestamp": 1781354684762}
-{"sessionId": "c450b5", "runId": "pre-migrate", "hypothesisId": "D", "location": "scripts/gate_a_migrate.py", "message": "migrate_success", "data": {"status": "ok"}, "timestamp": 1781354692253}
-{"sessionId": "c450b5", "runId": "pre-migrate", "hypothesisId": "C", "location": "scripts/gate_a_migrate.py", "message": "preflight_failed", "data": {"error": "ModuleNotFoundError", "detail": "No module named 'run'"}, "timestamp": 1781355333629}
-{"sessionId": "c450b5", "runId": "pre-migrate", "hypothesisId": "D", "location": "scripts/gate_a_migrate.py", "message": "migrate_success", "data": {"status": "ok"}, "timestamp": 1781355339218}

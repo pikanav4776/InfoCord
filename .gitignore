@@ -1,3 +1,5 @@
 
 .env
+.gate_a_database_url
 .flaskenv
+debug-*.log

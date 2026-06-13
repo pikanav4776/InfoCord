@@ -90,16 +90,25 @@ def _request(method: str, url: str, body: dict | None = None, headers: dict | No
 
 
 def _request_health_with_retry(api: str) -> tuple[int, dict]:
-    """GET /health with one retry (Render cold start)."""
+    """GET /health with retry (Render cold start or transient DB probe failure)."""
     url = f"{api}/health"
-    try:
-        return _request("GET", url)
-    except Exception as first_exc:
-        if _HTTPX and "Timeout" not in type(first_exc).__name__:
+    last: tuple[int, dict] = (0, {})
+    for attempt in range(2):
+        try:
+            status, body = _request("GET", url)
+        except Exception as first_exc:
+            if attempt == 0 and _HTTPX and "Timeout" in type(first_exc).__name__:
+                _safe_print("  Render cold start — retrying /health in 5s...")
+                time.sleep(5)
+                continue
             raise
-        _safe_print("  Render cold start — retrying /health in 5s...")
-        time.sleep(5)
-        return _request("GET", url)
+        last = (status, body)
+        if attempt == 0 and status == 503 and body.get("db") == "unavailable":
+            _safe_print("  Transient DB unavailable — retrying /health in 5s...")
+            time.sleep(5)
+            continue
+        return status, body
+    return last
 
 
 def _safe_print(text: str) -> None:
@@ -124,9 +133,20 @@ def check_health(api: str) -> bool:
     ok = True
     if status != 200 or body.get("db") != "ok":
         _safe_print("FAIL: Render cannot reach Postgres (db unavailable).")
-        _safe_print("  Fix: Render -> infocord -> Environment -> DATABASE_URL")
-        _safe_print("  Use ep-old-resonance pooled URL (same as gate_a_migrate postflight db_host).")
-        _safe_print("  Save, then Manual Deploy -> Deploy latest commit.")
+        hint = body.get("db_error_hint")
+        err_type = body.get("db_error_type")
+        configured = body.get("db_host_configured")
+        if configured:
+            _safe_print(f"  Render DATABASE_URL host: {configured}")
+        if err_type or hint:
+            _safe_print(f"  Server error: {err_type or 'unknown'} — {hint or '(no detail)'}")
+        _safe_print("  Usually DATABASE_URL on Render is wrong (503 after Save).")
+        _safe_print("  Checklist:")
+        _safe_print("    - Use Render paste URL from: python scripts\\gate_a_validate_url.py")
+        _safe_print("    - Must end with ?sslmode=require (NO channel_binding=require)")
+        _safe_print("    - Full URL, not host-only; no quotes; one line")
+        _safe_print("    - Push latest run.py (strips channel_binding) then Manual Deploy")
+        _safe_print("  Then: Render -> Environment -> DATABASE_URL -> Save -> wait Live")
         local_host = _local_db_host_hint()
         if local_host:
             _safe_print(f"  Your migrated db_host: {local_host}")
@@ -148,8 +168,20 @@ def check_health(api: str) -> bool:
         ok = False
     elif rev != EXPECTED_REVISION:
         _safe_print(f"FAIL: production DB revision {rev!r}, expected {EXPECTED_REVISION}")
+        render_host = body.get("db_host")
         local_host = _local_db_host_hint()
-        if local_host:
+        if render_host and local_host and render_host != local_host:
+            _safe_print(f"  Render db_host:  {render_host}")
+            _safe_print(f"  Migrated db_host: {local_host}")
+            _safe_print("")
+            _safe_print("  FIX (pick one):")
+            _safe_print("  A) Render -> Environment -> DATABASE_URL = your ep-old-resonance URL -> Save")
+            _safe_print("     (already migrated — fastest)")
+            _safe_print("  B) Copy DATABASE_URL from Render, run gate_a_migrate.py on that DB instead")
+        elif render_host:
+            _safe_print(f"  Render db_host: {render_host}")
+            _safe_print("  Run: $env:DATABASE_URL = <Render Environment value>; python scripts\\gate_a_migrate.py")
+        elif local_host:
             _safe_print(f"  Your migrated db_host: {local_host}")
             _safe_print("  Set Render DATABASE_URL to that exact Neon URL -> Save -> Manual Deploy.")
         ok = False

@@ -14,3 +14,8 @@ services:
         value: production
       - key: PYTHON_VERSION
         value: "3.12.0"
+      # Set values in Render Dashboard or during Blueprint sync (never commit secrets).
+      - key: DATABASE_URL
+        sync: false
+      - key: FLASK_SECRET_KEY
+        sync: false

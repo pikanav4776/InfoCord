@@ -27,7 +27,17 @@ DB_PORT          = os.getenv("DB_PORT")
 DB_username      = os.getenv("DB_username")
 DB_password      = os.getenv("DB_password")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
-DATABASE_URL     = os.getenv("DATABASE_URL")
+
+
+def sanitize_database_url(url: str | None) -> str:
+    """Strip whitespace/quotes/newlines from pasted connection strings (Render dashboard)."""
+    if not url:
+        return ""
+    cleaned = url.strip().strip('"').strip("'")
+    return cleaned.replace("\r", "").replace("\n", "")
+
+
+DATABASE_URL = sanitize_database_url(os.getenv("DATABASE_URL"))
 
 MAX_NOTE_LENGTH           = 10000
 MAX_CATEGORY_NAME         = 120
@@ -68,11 +78,32 @@ app.config["RATELIMIT_ENABLED"]           = False  # auth rate limits use Postgr
 
 
 def normalize_db_url(url: str) -> str:
-    if url and url.startswith("postgres://"):
-        return url.replace("postgres://", "postgresql+psycopg2://", 1)
-    if url and url.startswith("postgresql://"):
-        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    url = sanitize_database_url(url)
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        url = url.replace("postgres://", "postgresql+psycopg2://", 1)
+    elif url.startswith("postgresql://"):
+        url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    # Neon Connect may append channel_binding=require; Render/libpq often rejects it (503).
+    from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+    parsed = urlparse(url)
+    if parsed.query:
+        q = [
+            (k, v)
+            for k, v in parse_qsl(parsed.query, keep_blank_values=True)
+            if k.lower() != "channel_binding"
+        ]
+        url = urlunparse(parsed._replace(query=urlencode(q)))
     return url
+
+
+def _safe_db_error_hint(exc: Exception) -> str:
+    """First-line DB error for /health — no credentials or full URLs."""
+    msg = str(exc).split("\n")[0][:240]
+    msg = re.sub(r"postgresql[^\s'\"]+", "[connection-url]", msg, flags=re.IGNORECASE)
+    return msg
 
 
 def _db_host_hint() -> str | None:
@@ -526,18 +557,32 @@ def _probe_schema() -> dict:
 
 @app.route("/health")
 def health():
+    db_error_type = None
+    db_error_hint = None
     try:
         db.session.execute(db.text("SELECT 1"))
         db_status = "ok"
     except Exception as exc:
         logger.error(f"Health check DB probe failed: {exc}")
         db_status = "unavailable"
+        db_error_type = type(exc).__name__
+        db_error_hint = _safe_db_error_hint(exc)
 
     schema = _probe_schema() if db_status == "ok" else {}
+    configured_host = _db_host_hint()
 
     status = "ok" if db_status == "ok" else "degraded"
     http_code = 200 if status == "ok" else 503
-    return jsonify({"status": status, "db": db_status, **schema}), http_code
+    payload = {
+        "status": status,
+        "db": db_status,
+        **schema,
+    }
+    if db_status != "ok":
+        payload["db_host_configured"] = configured_host
+        payload["db_error_type"] = db_error_type
+        payload["db_error_hint"] = db_error_hint
+    return jsonify(payload), http_code
 
 
 # ─────────────────────────────────────────────
