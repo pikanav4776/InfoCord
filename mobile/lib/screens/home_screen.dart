@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 
 import '../models/note.dart';
 import '../providers/auth_provider.dart';
+import '../utils/note_plaintext.dart';
 import 'note_editor_screen.dart';
 import 'settings_screen.dart';
 
@@ -27,7 +28,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _loading = true);
     try {
       final notes = await context.read<AuthProvider>().loadNotesDecrypted();
-      if (mounted) setState(() => _notes = notes.where((n) => !n.archived).toList());
+      if (mounted) {
+        setState(() => _notes = notes.where((n) => !n.archived).toList());
+      }
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -39,12 +42,25 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  String _preview(Note n) {
+    final pt = n.plaintext ?? '';
+    final parts = splitNotePlaintext(pt);
+    final body = parts.$2.trim();
+    if (body.isNotEmpty) return body.split('\n').first;
+    return parts.$1;
+  }
+
+  Future<void> _archiveNote(Note n) async {
+    await context.read<AuthProvider>().archiveNote(n.id);
+    await _refresh();
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('InfoCord'),
+        title: Text(auth.userName ?? 'InfoCord'),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings),
@@ -61,11 +77,11 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () async {
-          await Navigator.push(
+          final saved = await Navigator.push<bool>(
             context,
             MaterialPageRoute(builder: (_) => const NoteEditorScreen()),
           );
-          _refresh();
+          if (saved == true) _refresh();
         },
         child: const Icon(Icons.add),
       ),
@@ -79,22 +95,46 @@ class _HomeScreenState extends State<HomeScreen> {
                     itemCount: _notes.length,
                     itemBuilder: (_, i) {
                       final n = _notes[i];
-                      return ListTile(
-                        title: Text(n.title.isEmpty ? 'Untitled' : n.title),
-                        subtitle: Text(
-                          (n.plaintext ?? '').split('\n').first,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                      return Dismissible(
+                        key: ValueKey(n.id),
+                        direction: DismissDirection.endToStart,
+                        background: Container(
+                          color: Colors.red.shade900,
+                          alignment: Alignment.centerRight,
+                          padding: const EdgeInsets.only(right: 20),
+                          child: const Icon(Icons.archive_outlined),
                         ),
-                        onTap: () async {
-                          await Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (_) => NoteEditorScreen(note: n),
-                            ),
-                          );
-                          _refresh();
+                        confirmDismiss: (_) async {
+                          return await showDialog<bool>(
+                                context: context,
+                                builder: (ctx) => AlertDialog(
+                                  title: const Text('Archive note?'),
+                                  actions: [
+                                    TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
+                                    TextButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Archive')),
+                                  ],
+                                ),
+                              ) ??
+                              false;
                         },
+                        onDismissed: (_) => _archiveNote(n),
+                        child: ListTile(
+                          title: Text(n.title.isEmpty ? 'Untitled' : n.title),
+                          subtitle: Text(
+                            _preview(n),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                          onTap: () async {
+                            final saved = await Navigator.push<bool>(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => NoteEditorScreen(note: n),
+                              ),
+                            );
+                            if (saved == true) _refresh();
+                          },
+                        ),
                       );
                     },
                   ),

@@ -499,6 +499,16 @@ def frontend():
     return content, 200, {'Content-Type': 'text/html'}
 
 
+@app.route("/static/<path:filename>")
+def static_files(filename):
+    return send_from_directory("static", filename)
+
+
+@app.route("/manifest.webmanifest")
+def web_manifest():
+    return send_from_directory("static", "manifest.webmanifest", mimetype="application/manifest+json")
+
+
 @app.route("/legal/privacy")
 def privacy_policy():
     return render_template("legal/privacy.html")

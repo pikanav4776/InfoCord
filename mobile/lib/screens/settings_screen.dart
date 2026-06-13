@@ -1,8 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
+import '../config/app_config.dart';
 import '../providers/auth_provider.dart';
-import '../services/api_service.dart';
+import '../utils/legal_links.dart';
 
 class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
@@ -13,7 +14,6 @@ class SettingsScreen extends StatefulWidget {
 
 class _SettingsScreenState extends State<SettingsScreen> {
   final _deletePassword = TextEditingController();
-  final _api = ApiService();
   bool _deleting = false;
 
   @override
@@ -22,7 +22,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
     super.dispose();
   }
 
+  Future<void> _openLegal(Future<void> Function() open) async {
+    try {
+      await open();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
+    }
+  }
+
   Future<void> _deleteAccount() async {
+    if (_deletePassword.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter your password to confirm deletion')),
+      );
+      return;
+    }
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -43,9 +59,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
     setState(() => _deleting = true);
     try {
-      await _api.deleteAccount(_deletePassword.text);
+      await context.read<AuthProvider>().deleteAccount(_deletePassword.text);
       if (mounted) {
-        await context.read<AuthProvider>().logout();
         Navigator.popUntil(context, (r) => r.isFirst);
       }
     } catch (e) {
@@ -61,11 +76,17 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final auth = context.watch<AuthProvider>();
     return Scaffold(
       appBar: AppBar(title: const Text('Settings')),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
+          ListTile(
+            title: const Text('Signed in as'),
+            subtitle: Text(auth.userEmail ?? ''),
+          ),
+          const Divider(),
           const Text('Danger Zone', style: TextStyle(color: Colors.red, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           const Text(
@@ -90,13 +111,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
           const Text('Legal', style: TextStyle(fontWeight: FontWeight.bold)),
           ListTile(
             title: const Text('Privacy Policy'),
-            subtitle: const Text('https://infocord.onrender.com/legal/privacy'),
-            onTap: () {},
+            subtitle: Text('${AppConfig.apiBaseUrl}/legal/privacy'),
+            trailing: const Icon(Icons.open_in_new),
+            onTap: () => _openLegal(LegalLinks.openPrivacy),
           ),
           ListTile(
             title: const Text('Terms of Service'),
-            subtitle: const Text('https://infocord.onrender.com/legal/terms'),
-            onTap: () {},
+            subtitle: Text('${AppConfig.apiBaseUrl}/legal/terms'),
+            trailing: const Icon(Icons.open_in_new),
+            onTap: () => _openLegal(LegalLinks.openTerms),
           ),
         ],
       ),

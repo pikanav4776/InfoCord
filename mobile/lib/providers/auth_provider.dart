@@ -1,29 +1,47 @@
 import 'package:flutter/foundation.dart';
 
+import '../models/note.dart';
 import '../services/api_service.dart';
 import '../services/crypto_service.dart';
 import '../services/secure_key_store.dart';
-import '../models/note.dart';
 
 class AuthProvider extends ChangeNotifier {
   AuthProvider({
     ApiService? api,
     CryptoService? crypto,
     SecureKeyStore? store,
-  })  : _api = api ?? ApiService(),
-        _crypto = crypto ?? CryptoService(),
-        _store = store ?? SecureKeyStore();
+  })  : _api = api ?? ApiService(store: store),
+        _crypto = crypto ?? CryptoService();
 
   final ApiService _api;
   final CryptoService _crypto;
-  final SecureKeyStore _store;
+
+  ApiService get api => _api;
+  CryptoService get crypto => _crypto;
 
   String? userName;
   String? userEmail;
   bool isLoading = false;
+  bool isBootstrapping = true;
   String? error;
 
   bool get isLoggedIn => userName != null;
+
+  /// Restore bearer token + master key session (B4 cold start).
+  Future<void> tryRestoreSession() async {
+    isBootstrapping = true;
+    notifyListeners();
+    try {
+      if (!await _api.hasStoredSession()) return;
+      final me = await _api.fetchMe();
+      if (me == null) return;
+      userName = me['name'] as String?;
+      userEmail = me['email'] as String?;
+    } finally {
+      isBootstrapping = false;
+      notifyListeners();
+    }
+  }
 
   Future<bool> login(String email, String password) async {
     isLoading = true;
@@ -40,6 +58,9 @@ class AuthProvider extends ChangeNotifier {
       userName = data['user']['name'] as String;
       userEmail = data['user']['email'] as String;
       return true;
+    } on ApiException catch (e) {
+      error = e.message;
+      return false;
     } catch (e) {
       error = e.toString();
       return false;
@@ -49,8 +70,42 @@ class AuthProvider extends ChangeNotifier {
     }
   }
 
+  /// Signup then login + key derive (signup API does not return a token).
+  Future<Map<String, dynamic>?> signup({
+    required String email,
+    required String password,
+    required String name,
+  }) async {
+    isLoading = true;
+    error = null;
+    notifyListeners();
+    try {
+      final data = await _api.signup(email: email, password: password, name: name);
+      final loggedIn = await login(email, password);
+      if (!loggedIn) return null;
+      return data;
+    } on ApiException catch (e) {
+      error = e.message;
+      return null;
+    } catch (e) {
+      error = e.toString();
+      return null;
+    } finally {
+      isLoading = false;
+      notifyListeners();
+    }
+  }
+
   Future<void> logout() async {
     await _api.logout();
+    userName = null;
+    userEmail = null;
+    notifyListeners();
+  }
+
+  /// B5 — delete account without calling logout API (token revoked server-side).
+  Future<void> deleteAccount(String password) async {
+    await _api.deleteAccount(password);
     userName = null;
     userEmail = null;
     notifyListeners();
@@ -68,5 +123,9 @@ class AuthProvider extends ChangeNotifier {
       }
     }
     return notes;
+  }
+
+  Future<void> archiveNote(String noteId) async {
+    await _api.archiveNote(noteId);
   }
 }

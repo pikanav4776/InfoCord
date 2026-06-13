@@ -7,6 +7,14 @@ import '../config/app_config.dart';
 import '../models/note.dart';
 import 'secure_key_store.dart';
 
+class ApiException implements Exception {
+  ApiException(this.message, {this.statusCode});
+  final String message;
+  final int? statusCode;
+  @override
+  String toString() => message;
+}
+
 class ApiService {
   ApiService({SecureKeyStore? store}) : _store = store ?? SecureKeyStore();
 
@@ -44,6 +52,11 @@ class ApiService {
     }
   }
 
+  Map<String, dynamic> _decodeJson(http.Response res) {
+    if (res.body.isEmpty) return {};
+    return jsonDecode(res.body) as Map<String, dynamic>;
+  }
+
   Future<Map<String, dynamic>> signup({
     required String email,
     required String password,
@@ -54,7 +67,11 @@ class ApiService {
       'password': password,
       'name': name,
     });
-    return jsonDecode(res.body) as Map<String, dynamic>;
+    final data = _decodeJson(res);
+    if (res.statusCode != 201) {
+      throw ApiException(data['error'] as String? ?? 'Signup failed', statusCode: res.statusCode);
+    }
+    return data;
   }
 
   Future<Map<String, dynamic>> login({
@@ -65,29 +82,51 @@ class ApiService {
       'email': email,
       'password': password,
     });
-    final data = jsonDecode(res.body) as Map<String, dynamic>;
-    if (res.statusCode == 200 && data['token'] != null) {
+    final data = _decodeJson(res);
+    if (res.statusCode != 200) {
+      throw ApiException(data['error'] as String? ?? 'Login failed', statusCode: res.statusCode);
+    }
+    if (data['token'] != null) {
       await _store.saveBearerToken(data['token'] as String);
     }
     return data;
   }
 
+  Future<Map<String, dynamic>?> fetchMe() async {
+    final token = await _store.readBearerToken();
+    if (token == null) return null;
+    final res = await _request('GET', '/auth/me');
+    if (res.statusCode == 200) {
+      return _decodeJson(res);
+    }
+    if (res.statusCode == 401) {
+      await _store.clearAll();
+    }
+    return null;
+  }
+
   Future<void> logout() async {
-    await _request('POST', '/auth/logout');
-    await _store.clearAll();
+    try {
+      await _request('POST', '/auth/logout');
+    } finally {
+      await _store.clearAll();
+    }
   }
 
   Future<void> deleteAccount(String password) async {
     final res = await _request('DELETE', '/auth/account', body: {'password': password});
+    final data = _decodeJson(res);
     if (res.statusCode != 200) {
-      final data = jsonDecode(res.body) as Map<String, dynamic>;
-      throw Exception(data['error'] ?? 'Delete failed');
+      throw ApiException(data['error'] as String? ?? 'Delete failed', statusCode: res.statusCode);
     }
     await _store.clearAll();
   }
 
   Future<List<Note>> fetchNotes() async {
     final res = await _request('GET', '/notes');
+    if (res.statusCode != 200) {
+      throw ApiException('Failed to load notes', statusCode: res.statusCode);
+    }
     final list = jsonDecode(res.body) as List<dynamic>;
     return list.map((e) => Note.fromJson(e as Map<String, dynamic>)).toList();
   }
@@ -106,7 +145,11 @@ class ApiService {
       'salt': salt,
       if (categoryId != null) 'category_id': categoryId,
     });
-    return Note.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    final data = _decodeJson(res);
+    if (res.statusCode != 201) {
+      throw ApiException(data['error'] as String? ?? 'Create failed', statusCode: res.statusCode);
+    }
+    return Note.fromJson(data);
   }
 
   Future<void> updateNote({
@@ -125,16 +168,27 @@ class ApiService {
       'version': version,
     });
     if (res.statusCode == 409) {
-      throw VersionConflictException(jsonDecode(res.body) as Map<String, dynamic>);
+      throw VersionConflictException(_decodeJson(res));
     }
     if (res.statusCode != 200) {
-      throw Exception(jsonDecode(res.body)['error'] ?? 'Update failed');
+      throw ApiException(_decodeJson(res)['error'] as String? ?? 'Update failed', statusCode: res.statusCode);
     }
   }
 
   Future<Note> fetchNote(String noteId) async {
     final res = await _request('GET', '/notes/$noteId');
-    return Note.fromJson(jsonDecode(res.body) as Map<String, dynamic>);
+    final data = _decodeJson(res);
+    if (res.statusCode != 200) {
+      throw ApiException(data['error'] as String? ?? 'Fetch failed', statusCode: res.statusCode);
+    }
+    return Note.fromJson(data);
+  }
+
+  Future<void> archiveNote(String noteId) async {
+    final res = await _request('PATCH', '/notes/$noteId/archive');
+    if (res.statusCode != 200) {
+      throw ApiException(_decodeJson(res)['error'] as String? ?? 'Archive failed', statusCode: res.statusCode);
+    }
   }
 
   Future<void> persistMasterKey(SecretKey key) async {
@@ -146,6 +200,12 @@ class ApiService {
     final b64 = await _store.readMasterKeyB64();
     if (b64 == null) return null;
     return SecretKey(base64.decode(b64));
+  }
+
+  Future<bool> hasStoredSession() async {
+    final token = await _store.readBearerToken();
+    final key = await _store.readMasterKeyB64();
+    return token != null && key != null;
   }
 }
 

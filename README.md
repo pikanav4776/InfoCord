@@ -396,8 +396,8 @@ This checklist tracks what is needed to move InfoCord from a working **web MVP**
 **Remaining steps (web → app store)**
 - [x] Flutter mobile app scaffold in `mobile/` (run `flutter create` + `flutter pub get` — see `mobile/README.md`)
 - [x] Align mobile PBKDF2 iterations with web (310,000)
-- [ ] App icons, splash screens, store screenshots, and listing copy
-- [ ] Apple Developer Program + Google Play Console accounts
+- [x] App icons, splash screens, store screenshots guide, and listing copy (`store/`, `images/icon_generation.py`)
+- [ ] Apple Developer Program + Google Play Console accounts (`store/accounts.md`)
 - [x] Privacy policy URL at `/legal/privacy`
 - [x] Terms of service at `/legal/terms`
 - [x] Account deletion (`DELETE /auth/account` + Settings UI on web and mobile)
@@ -409,7 +409,7 @@ This checklist tracks what is needed to move InfoCord from a working **web MVP**
 | Priority | Category | Key blockers |
 |----------|----------|--------------|
 | **P0 — Must have** | Mobile product | Flutter scaffold in `mobile/` — still needs `flutter create`, device testing, store assets |
-| **P0 — Must have** | Store requirements | Privacy + terms live; account deletion done; **icons/screenshots still needed** |
+| **P0 — Must have** | Store requirements | Privacy + terms live; account deletion done; **icons + listing copy done** — screenshots + dev accounts still needed |
 | **P0 — Must have** | Production stability | **Done** — Bearer tokens + rate limits moved to PostgreSQL (`auth_tokens`, `rate_limit_buckets`) |
 | **P1 — Should have** | Compliance | Privacy policy content, DPDPA (India) + CCPA (US) basics, age APIs for US mobile |
 | **P1 — Should have** | Operations | Monitoring, error tracking, incident runbook, backup restore test |
@@ -437,116 +437,187 @@ Each note has a `version` integer. When you save, the client sends the version i
 
 ---
 
-## How to verify Neon deployment
+## Gate A — Pre-app backend checklist (Phase A)
 
-Neon is your PostgreSQL host. The Flask app connects via `DATABASE_URL`.
+**Status: Complete** — production API + Neon verified at `https://infocord.onrender.com` before mobile work.
 
----
+### What was done
 
-## Gate A — Pre-app backend checklist (exact steps)
+1. **Schema (A1)** — Ran Alembic to head revision `e8f4a1b2c3d5` on Neon. All six tables present: `users`, `categories`, `notes`, `note_links`, `auth_tokens`, `rate_limit_buckets`. Bearer tokens store HMAC digests only (never plaintext).
+2. **Render alignment (A5)** — Set Render `DATABASE_URL` to the **same** pooled Neon URL used for migrate (copy from Neon Connect; use `?sslmode=require` only — omit `channel_binding=require`). Confirm `/health` → `db_host` matches that Neon host.
+3. **Deploy** — `git push origin main` → Render auto-deploys; `render.yaml` runs `flask db upgrade` pre-deploy.
+4. **Smoke (A2–A4)** — Automated prod test: signup → encrypted note → Bearer auth → account delete.
 
-**Strategy:** Web is the test harness; Gate A proves production API + Neon before mobile work.
+| Step | What | How verified |
+|------|------|--------------|
+| **A1** | Migrations at head on Neon | `/health`: `migration_ok: true`, `schema_tables_missing: []` |
+| **A2** | Prod signup → note | `--full-smoke` or manual `/app` |
+| **A3** | Account deletion | `--full-smoke` or Settings → Delete |
+| **A4** | Bearer token auth | `--full-smoke` |
+| **A5** | Latest code on Render | `git push` + `/health` returns 200 |
 
-| Step | What | Status | How |
-|------|------|--------|-----|
-| **A1** | Migrations at head on Neon | **You run once** | See below |
-| **A2** | Prod signup → note in Neon | **Verify** | `--full-smoke` or manual `/app` |
-| **A3** | Account deletion works | **Verify** | `--full-smoke` or Settings → Delete |
-| **A4** | Bearer token auth (mobile) | **Verify** | `--full-smoke` |
-| **A5** | Latest code deployed to Render | **On git push** | `render.yaml` runs `flask db upgrade` pre-deploy |
-
-### A1 — Run migrations on Neon (not done until `migration_ok: true`)
-
-**PowerShell (one time, or after new migrations):**
+### Verify (re-run anytime)
 
 ```powershell
 cd c:\InfoCord
 .venv\Scripts\activate
-$env:DATABASE_URL = "postgresql://USER:PASS@ep-xxxx.neon.tech/neondb?sslmode=require"  # from Neon console
-python scripts/gate_a_migrate.py
+python scripts/gate_a_verify.py --insecure
+python scripts/gate_a_verify.py --full-smoke --insecure
 ```
 
-**Or:** connect Render to this repo and use `render.yaml` — `preDeployCommand: flask db upgrade` runs A1 on every deploy.
+Both must print **`GATE A: PASSED`**. On Windows add `--insecure` if TLS verification fails.
 
-### Verify A1 + A5 — health endpoint (no Windows curl SSL issues)
-
-```powershell
-python scripts/gate_a_verify.py
-# Windows SSL issues (same as curl schannel): add --insecure, or use:
-# (Invoke-WebRequest -Uri "https://infocord.onrender.com/health" -UseBasicParsing).Content
-```
-
-Expect:
+Expected `/health` (essential fields):
 
 ```json
 {
   "status": "ok",
   "db": "ok",
-  "migration_revision": "d7e3f2a1b8c4",
+  "db_host": "ep-xxxx-pooler.c-3.us-east-2.aws.neon.tech/neondb",
+  "migration_revision": "e8f4a1b2c3d5",
   "migration_ok": true,
   "schema_ok": true,
   "schema_tables_missing": []
 }
 ```
 
-If `migration_revision` is null or `schema_tables_missing` lists tables → **A1 not complete**.
+**Source of truth for which DB Render uses:** `db_host` in `/health` (not the app URL). If migrate passed locally but verify fails, Render `DATABASE_URL` points at a different Neon project — realign or run `python scripts/gate_a_migrate.py` against Render’s URL.
 
-### A2–A4 — Full production smoke (creates then deletes a test user)
+### Tooling
 
-```powershell
-python scripts/gate_a_verify.py --full-smoke
-```
+| Script | Purpose |
+|--------|---------|
+| `scripts/gate_a_migrate.py` | Apply migrations to `$env:DATABASE_URL` |
+| `scripts/gate_a_verify.py` | Gate A verify (`--full-smoke --insecure`) |
+| `scripts/gate_a_validate_url.py` | Test URL locally; print Render-safe connection string |
+| `scripts/gate_a_status.py` | Compare prod `db_host` vs local `DATABASE_URL` |
 
-This runs: signup → login → Bearer `/auth/me` → encrypted note → delete account.
-
-**Manual alternative:** use https://infocord.onrender.com/app and confirm rows in Neon.
+New migrations: set `DATABASE_URL` to Neon → `gate_a_migrate.py` → push to Render → re-run verify.
 
 ---
 
-### Legacy Neon checks
+## Gate B — Mobile v1 checklist (Phase B)
 
-**1. Check Render environment**
-- Render dashboard → your InfoCord service → **Environment**
-- Confirm `DATABASE_URL` is set and starts with `postgres://` or `postgresql://` pointing at a Neon host (e.g. `*.neon.tech`)
+**Status: Code complete — device verification pending.** Gate A (backend) must pass before closing Gate B on a real emulator or phone.
 
-**2. Health check (API)**
+**Strategy:** Flutter app in `mobile/` uses the same E2EE model as web (PBKDF2 310k, salt `infocord-v1`, AES-GCM with auth tag appended to ciphertext for web parity).
+
+### Checklist
+
+| Step | What | Implementation | Verify |
+|------|------|----------------|--------|
+| **B1** | `flutter create` + build + tests | `mobile/test/` unit tests; run `flutter create` once for `android/`/`ios/` | `flutter test` · `flutter run` |
+| **B2** | Sign up, sign in, log out | `signup_screen.dart`, `login_screen.dart`, `AuthProvider.tryRestoreSession()` | Create account → logout → login |
+| **B3** | Notes CRUD (E2EE) | Create, read, update, **archive** (web-aligned; `PATCH /notes/{id}/archive`) | + note on device; pull-to-refresh |
+| **B4** | Keychain / Keystore | `secure_key_store.dart` — bearer token + master key; password never stored | Kill app → reopen (session restore) |
+| **B5** | Account deletion | Settings → password → `AuthProvider.deleteAccount()` (no logout API after delete) | Delete test user on device |
+| **B6** | 409 conflict dialog | Keep Mine / Use Server (server path decrypts into editor) | Edit same note on web + mobile |
+| **B7** | Privacy + Terms links | `url_launcher` → `/legal/privacy`, `/legal/terms` | Tap links on login + Settings |
+| **B8** | Crypto parity with web | `crypto_service.dart` — GCM tag in ciphertext; same plaintext layout (`title\n\nbody`) | Mobile note decrypts on web (same account) |
+
+### B3 — what was partial before mobile v1
+
+| Operation | Before | Now |
+|-----------|--------|-----|
+| Create / read / update | Dart scaffold only | Full flow wired |
+| Delete / archive | Missing | Archive (swipe on home or editor menu) |
+| Categories / note links | — | Still **web-only** (post–Gate B) |
+
+### Setup (B1)
+
+```powershell
+cd c:\InfoCord\mobile
+flutter create --project-name infocord_mobile --org com.infocord .
+flutter pub get
+flutter test
+flutter run
+```
+
+**API URL:** default production in `lib/config/app_config.dart`. Local dev:
+
+```powershell
+flutter run --dart-define=INFOCORD_API_URL=http://10.0.2.2:5000   # Android emulator
+```
+
+### B8 — cross-client smoke (manual)
+
+1. Mobile: sign in → create note **"Gate B parity test"**
+2. Web: same account at https://infocord.onrender.com/app → note decrypts
+3. Web: edit note → mobile pull-to-refresh → see update
+4. Optional: trigger 409 (edit in both clients) → test **Keep Mine** / **Use Server** on mobile
+
+### Mobile tests (B1)
+
+| File | Covers |
+|------|--------|
+| `mobile/test/crypto_service_test.dart` | Encrypt/decrypt round-trip, PBKDF2, GCM tag layout (B8) |
+| `mobile/test/api_service_test.dart` | `VersionConflictException` (B6) |
+
+More detail: **`mobile/README.md`**.
+
+---
+
+## Gate C — Store submission package
+
+**Status:** Automated assets complete — manual console setup and device screenshots remain.
+
+| Step | What | Status |
+|------|------|--------|
+| **C1** | Apple Developer + Google Play accounts | Manual — `store/accounts.md` |
+| **C2** | App icon 1024×1024 + Android adaptive icon | `python images/icon_generation.py` → `mobile/assets/icons/` + `static/icons/` |
+| **C3** | Splash screen | `flutter_native_splash` in `mobile/pubspec.yaml`; in-app splash in `main.dart` |
+| **C4** | Store screenshots (phone sizes) | Capture guide — `store/screenshots/README.md` |
+| **C5** | Short + long description, keywords, age rating | `store/listing.md` |
+| **C6** | Privacy policy URL | https://infocord.onrender.com/legal/privacy |
+
+### Icon design
+
+Syne Bold **IC** in white on `#0e0f11`; minimalist eye (ring + pupil) atop the **I**. Web uses Syne via Google Fonts; mobile uses `google_fonts` package (same family).
+
+### Verify
+
+```powershell
+cd c:\InfoCord
+.venv\Scripts\activate
+python scripts/gate_c_status.py --insecure
+```
+
+After `flutter create` in `mobile/`:
+
 ```bash
-curl https://infocord.onrender.com/health
-```
-Expect `"database": "ok"`. If `"unavailable"`, the API cannot reach Neon.
-
-**3. Local `.env`**
-```env
-DATABASE_URL=postgresql://user:pass@ep-xxxx.us-east-2.aws.neon.tech/neondb?sslmode=require
+cd mobile
+flutter pub get
+dart run flutter_launcher_icons
+dart run flutter_native_splash:create
 ```
 
-**4. Neon console**
-- [console.neon.tech](https://console.neon.tech) → your project → **Tables**
-- After signup, you should see `users`, `notes`, `categories`, `auth_tokens`, etc.
+---
 
-**5. Run migrations on production**
-```bash
-# With DATABASE_URL pointing at Neon
-flask db upgrade
-```
+## How to verify Neon deployment
+
+Neon is your PostgreSQL host. The Flask app connects via `DATABASE_URL`. Gate A verify (above) is the recommended check; manual fallback:
+
+- Render → **infocord** → **Environment** → `DATABASE_URL` (must match `/health` `db_host` after deploy)
+- Neon console → **Tables** → confirm all six tables above exist
 
 ---
 
 ## Flutter mobile app — development checklist
 
-Full scaffold lives in `mobile/`. See `mobile/README.md`.
+Gate B (above) is the mobile product gate. Quick reference:
 
 | Step | Action |
 |------|--------|
 | 1 | Install Flutter SDK 3.19+ |
 | 2 | `cd mobile && flutter create --project-name infocord_mobile --org com.infocord .` |
-| 3 | `flutter pub get` |
-| 4 | Set API URL in `lib/config/app_config.dart` or `--dart-define=INFOCORD_API_URL=...` |
-| 5 | Run on emulator: `flutter run` |
-| 6 | Test login → create note → encrypt → sync with web account |
-| 7 | Test account deletion in Settings |
-| 8 | Replace placeholder icon in `assets/icons/` |
-| 9 | Build release: `flutter build apk` / `flutter build ios` |
+| 3 | `flutter pub get && flutter test && flutter run` |
+| 4 | API URL: `lib/config/app_config.dart` or `--dart-define=INFOCORD_API_URL=...` |
+| 5 | B8: create note on mobile → confirm decrypt on web `/app` |
+| 6 | B5: account deletion in Settings |
+| 7 | Icons: `python images/icon_generation.py` then `dart run flutter_launcher_icons` (after `flutter create`) |
+| 8 | Build release: `flutter build apk` / `flutter build ios` |
+
+Full Gate B + Gate C steps: **`mobile/README.md`**.
 
 ### Secure key storage (mobile)
 

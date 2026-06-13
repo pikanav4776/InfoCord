@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../providers/auth_provider.dart';
+import '../utils/legal_links.dart';
+import 'signup_screen.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -28,6 +30,16 @@ class _LoginScreenState extends State<LoginScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text(auth.error ?? 'Login failed')),
       );
+    }
+  }
+
+  Future<void> _openLegal(Future<void> Function() open) async {
+    try {
+      await open();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(e.toString())));
+      }
     }
   }
 
@@ -68,6 +80,7 @@ class _LoginScreenState extends State<LoginScreen> {
                 controller: _password,
                 decoration: const InputDecoration(labelText: 'Password'),
                 obscureText: true,
+                onSubmitted: (_) => _submit(),
               ),
               const SizedBox(height: 24),
               FilledButton(
@@ -80,10 +93,30 @@ class _LoginScreenState extends State<LoginScreen> {
                       )
                     : const Text('Sign In'),
               ),
+              const SizedBox(height: 12),
+              OutlinedButton(
+                onPressed: auth.isLoading
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (_) => const SignupScreen()),
+                        ),
+                child: const Text('Create account'),
+              ),
               const Spacer(),
-              TextButton(
-                onPressed: () {},
-                child: const Text('Privacy Policy · Terms'),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  TextButton(
+                    onPressed: () => _openLegal(LegalLinks.openPrivacy),
+                    child: const Text('Privacy Policy'),
+                  ),
+                  const Text('·', style: TextStyle(color: Color(0xFF9A9BA8))),
+                  TextButton(
+                    onPressed: () => _openLegal(LegalLinks.openTerms),
+                    child: const Text('Terms'),
+                  ),
+                ],
               ),
             ],
           ),
