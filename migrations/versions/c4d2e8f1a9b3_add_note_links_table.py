@@ -9,8 +9,8 @@ from alembic import op
 import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
+from util import table_exists
 
-# revision identifiers, used by Alembic.
 revision = "c4d2e8f1a9b3"
 down_revision = "b8a1a6e2c4f1"
 branch_labels = None
@@ -18,6 +18,8 @@ depends_on = None
 
 
 def upgrade():
+    if table_exists("note_links"):
+        return
     op.create_table(
         "note_links",
         sa.Column("source_note_id", postgresql.UUID(as_uuid=True), nullable=False),
@@ -29,4 +31,5 @@ def upgrade():
 
 
 def downgrade():
-    op.drop_table("note_links")
+    if table_exists("note_links"):
+        op.drop_table("note_links")

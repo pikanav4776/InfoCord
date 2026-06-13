@@ -441,6 +441,70 @@ Each note has a `version` integer. When you save, the client sends the version i
 
 Neon is your PostgreSQL host. The Flask app connects via `DATABASE_URL`.
 
+---
+
+## Gate A — Pre-app backend checklist (exact steps)
+
+**Strategy:** Web is the test harness; Gate A proves production API + Neon before mobile work.
+
+| Step | What | Status | How |
+|------|------|--------|-----|
+| **A1** | Migrations at head on Neon | **You run once** | See below |
+| **A2** | Prod signup → note in Neon | **Verify** | `--full-smoke` or manual `/app` |
+| **A3** | Account deletion works | **Verify** | `--full-smoke` or Settings → Delete |
+| **A4** | Bearer token auth (mobile) | **Verify** | `--full-smoke` |
+| **A5** | Latest code deployed to Render | **On git push** | `render.yaml` runs `flask db upgrade` pre-deploy |
+
+### A1 — Run migrations on Neon (not done until `migration_ok: true`)
+
+**PowerShell (one time, or after new migrations):**
+
+```powershell
+cd c:\InfoCord
+.venv\Scripts\activate
+$env:DATABASE_URL = "postgresql://USER:PASS@ep-xxxx.neon.tech/neondb?sslmode=require"  # from Neon console
+python scripts/gate_a_migrate.py
+```
+
+**Or:** connect Render to this repo and use `render.yaml` — `preDeployCommand: flask db upgrade` runs A1 on every deploy.
+
+### Verify A1 + A5 — health endpoint (no Windows curl SSL issues)
+
+```powershell
+python scripts/gate_a_verify.py
+# Windows SSL issues (same as curl schannel): add --insecure, or use:
+# (Invoke-WebRequest -Uri "https://infocord.onrender.com/health" -UseBasicParsing).Content
+```
+
+Expect:
+
+```json
+{
+  "status": "ok",
+  "db": "ok",
+  "migration_revision": "d7e3f2a1b8c4",
+  "migration_ok": true,
+  "schema_ok": true,
+  "schema_tables_missing": []
+}
+```
+
+If `migration_revision` is null or `schema_tables_missing` lists tables → **A1 not complete**.
+
+### A2–A4 — Full production smoke (creates then deletes a test user)
+
+```powershell
+python scripts/gate_a_verify.py --full-smoke
+```
+
+This runs: signup → login → Bearer `/auth/me` → encrypted note → delete account.
+
+**Manual alternative:** use https://infocord.onrender.com/app and confirm rows in Neon.
+
+---
+
+### Legacy Neon checks
+
 **1. Check Render environment**
 - Render dashboard → your InfoCord service → **Environment**
 - Confirm `DATABASE_URL` is set and starts with `postgres://` or `postgresql://` pointing at a Neon host (e.g. `*.neon.tech`)

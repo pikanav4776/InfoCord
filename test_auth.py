@@ -216,6 +216,33 @@ class TestHealth:
         res = client.get("/health")
         assert res.content_type == "application/json"
 
+    def test_health_includes_gate_a_schema_fields(self, client):
+        res = client.get("/health")
+        body = res.get_json()
+        assert body["migration_expected"] == "d7e3f2a1b8c4"
+        assert "schema_tables_present" in body
+        assert "schema_tables_missing" in body
+        assert "migration_ok" in body
+        assert "schema_ok" in body
+        # SQLite test DB uses create_all — all model tables, no alembic_version row
+        assert body["schema_ok"] is True
+
+    def test_health_migration_ok_when_alembic_at_head(self, client):
+        with client.application.app_context():
+            db.session.execute(db.text(
+                "CREATE TABLE IF NOT EXISTS alembic_version "
+                "(version_num VARCHAR(32) NOT NULL)"
+            ))
+            db.session.execute(db.text("DELETE FROM alembic_version"))
+            db.session.execute(db.text(
+                "INSERT INTO alembic_version (version_num) VALUES ('d7e3f2a1b8c4')"
+            ))
+            db.session.commit()
+        res = client.get("/health")
+        body = res.get_json()
+        assert body["migration_ok"] is True
+        assert body["migration_revision"] == "d7e3f2a1b8c4"
+
 
 # ─────────────────────────────────────────────
 # REQUEST ID HEADER  (Phase 6)

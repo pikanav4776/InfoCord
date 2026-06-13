@@ -35,6 +35,17 @@ MAX_FAILED_ATTEMPTS       = 5
 LOCKOUT_DURATION_MINUTES  = 15
 TOKEN_EXPIRY_DAYS         = 7
 
+# Alembic head — keep in sync with migrations/versions/ (Gate A health check)
+EXPECTED_MIGRATION_REVISION = "d7e3f2a1b8c4"
+REQUIRED_SCHEMA_TABLES = (
+    "users",
+    "categories",
+    "notes",
+    "note_links",
+    "auth_tokens",
+    "rate_limit_buckets",
+)
+
 app = Flask(__name__)
 CORS(
     app,
@@ -447,6 +458,51 @@ def terms_of_service():
     return render_template("legal/terms.html")
 
 
+def _probe_schema() -> dict:
+    """Report Alembic revision and required tables (Gate A verification)."""
+    migration_revision = None
+    migration_ok = False
+    try:
+        migration_revision = db.session.execute(
+            db.text("SELECT version_num FROM alembic_version LIMIT 1")
+        ).scalar()
+        migration_ok = migration_revision == EXPECTED_MIGRATION_REVISION
+    except Exception:
+        db.session.rollback()
+
+    dialect = db.engine.dialect.name
+    present: list[str] = []
+    missing: list[str] = list(REQUIRED_SCHEMA_TABLES)
+
+    try:
+        if dialect == "sqlite":
+            rows = db.session.execute(
+                db.text("SELECT name FROM sqlite_master WHERE type='table'")
+            ).scalars().all()
+            present = [t for t in REQUIRED_SCHEMA_TABLES if t in rows]
+        else:
+            rows = db.session.execute(
+                db.text(
+                    "SELECT table_name FROM information_schema.tables "
+                    "WHERE table_schema = 'public' AND table_type = 'BASE TABLE'"
+                )
+            ).scalars().all()
+            present = [t for t in REQUIRED_SCHEMA_TABLES if t in rows]
+        missing = [t for t in REQUIRED_SCHEMA_TABLES if t not in present]
+    except Exception as exc:
+        logger.warning(f"Schema table probe failed: {exc}")
+        db.session.rollback()
+
+    return {
+        "migration_revision": migration_revision,
+        "migration_expected": EXPECTED_MIGRATION_REVISION,
+        "migration_ok": migration_ok,
+        "schema_tables_present": present,
+        "schema_tables_missing": missing,
+        "schema_ok": len(missing) == 0,
+    }
+
+
 @app.route("/health")
 def health():
     try:
@@ -456,9 +512,11 @@ def health():
         logger.error(f"Health check DB probe failed: {exc}")
         db_status = "unavailable"
 
+    schema = _probe_schema() if db_status == "ok" else {}
+
     status = "ok" if db_status == "ok" else "degraded"
     http_code = 200 if status == "ok" else 503
-    return jsonify({"status": status, "db": db_status}), http_code
+    return jsonify({"status": status, "db": db_status, **schema}), http_code
 
 
 # ─────────────────────────────────────────────

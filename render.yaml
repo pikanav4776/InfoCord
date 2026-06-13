@@ -1,0 +1,16 @@
+# Render Blueprint — https://render.com/docs/blueprint-spec
+# Pre-deploy runs Gate A1 (Alembic migrations) automatically on each deploy.
+services:
+  - type: web
+    name: infocord
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: flask db upgrade
+    startCommand: gunicorn run:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: FLASK_APP
+        value: run:app
+      - key: FLASK_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: "3.12.0"

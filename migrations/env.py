@@ -1,5 +1,10 @@
 import logging
+import os
+import sys
 from logging.config import fileConfig
+
+# Allow migration scripts to import shared helpers from migrations/util.py
+sys.path.insert(0, os.path.dirname(__file__))
 
 from flask import current_app
 
