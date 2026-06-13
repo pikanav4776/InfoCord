@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import secrets
 import sys
 import time
@@ -33,7 +34,7 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-EXPECTED_REVISION = "d7e3f2a1b8c4"
+EXPECTED_REVISION = "e8f4a1b2c3d5"
 REQUIRED_TABLES = {
     "users",
     "categories",
@@ -44,13 +45,29 @@ REQUIRED_TABLES = {
 }
 
 _VERIFY_SSL = True
+_HTTP_TIMEOUT = 120.0  # Render free tier cold starts can exceed 30s
+
+
+def _local_db_host_hint() -> str | None:
+    """Non-secret host/db from local DATABASE_URL (for mismatch diagnostics)."""
+    raw = os.getenv("DATABASE_URL", "")
+    if not raw:
+        return None
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(raw.replace("postgresql+psycopg2://", "postgresql://", 1))
+        host = parsed.hostname or ""
+        dbname = (parsed.path or "").lstrip("/").split("?")[0] or ""
+        return f"{host}/{dbname}" if host else None
+    except Exception:
+        return None
 
 
 def _request(method: str, url: str, body: dict | None = None, headers: dict | None = None) -> tuple[int, dict]:
     hdrs = {"Content-Type": "application/json", **(headers or {})}
     if _HTTPX:
         verify = certifi.where() if (_VERIFY_SSL and certifi) else False
-        with httpx.Client(timeout=30.0, verify=verify) as client:
+        with httpx.Client(timeout=_HTTP_TIMEOUT, verify=verify) as client:
             resp = client.request(method, url, json=body, headers=hdrs)
             try:
                 payload = resp.json() if resp.content else {}
@@ -60,7 +77,7 @@ def _request(method: str, url: str, body: dict | None = None, headers: dict | No
     data = json.dumps(body).encode() if body is not None else None
     req = Request(url, data=data, headers=hdrs, method=method)
     try:
-        with urlopen(req, timeout=30) as resp:
+        with urlopen(req, timeout=_HTTP_TIMEOUT) as resp:
             raw = resp.read().decode()
             return resp.status, json.loads(raw) if raw else {}
     except HTTPError as exc:
@@ -72,29 +89,73 @@ def _request(method: str, url: str, body: dict | None = None, headers: dict | No
         return exc.code, payload
 
 
+def _request_health_with_retry(api: str) -> tuple[int, dict]:
+    """GET /health with one retry (Render cold start)."""
+    url = f"{api}/health"
+    try:
+        return _request("GET", url)
+    except Exception as first_exc:
+        if _HTTPX and "Timeout" not in type(first_exc).__name__:
+            raise
+        _safe_print("  Render cold start — retrying /health in 5s...")
+        time.sleep(5)
+        return _request("GET", url)
+
+
+def _safe_print(text: str) -> None:
+    """Avoid UnicodeEncodeError on Windows cp1252 consoles."""
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", errors="replace").decode("ascii"))
+
+
 def check_health(api: str) -> bool:
-    print("\n=== A1/A5 — Health + schema (migrations + deploy) ===")
-    status, body = _request("GET", f"{api}/health")
-    print(f"GET /health → {status}")
+    _safe_print("\n=== A1/A5 - Health + schema (migrations + deploy) ===")
+    try:
+        status, body = _request_health_with_retry(api)
+    except Exception as exc:
+        _safe_print(f"FAIL: /health request error: {exc}")
+        _safe_print("  Render may be cold-starting — wait 30s and retry, or wake service in Render dashboard.")
+        return False
+    _safe_print(f"GET /health -> {status}")
     print(json.dumps(body, indent=2))
 
     ok = True
     if status != 200 or body.get("db") != "ok":
-        print("FAIL: database not reachable")
+        _safe_print("FAIL: Render cannot reach Postgres (db unavailable).")
+        _safe_print("  Fix: Render -> infocord -> Environment -> DATABASE_URL")
+        _safe_print("  Use ep-old-resonance pooled URL (same as gate_a_migrate postflight db_host).")
+        _safe_print("  Save, then Manual Deploy -> Deploy latest commit.")
+        local_host = _local_db_host_hint()
+        if local_host:
+            _safe_print(f"  Your migrated db_host: {local_host}")
         return False
 
+    prod_expected = body.get("migration_expected")
+    if prod_expected and prod_expected != EXPECTED_REVISION:
+        _safe_print(
+            f"NOTE: Render runs old code (server expects {prod_expected!r}, "
+            f"verify script expects {EXPECTED_REVISION!r})."
+        )
+        _safe_print("  Push + Manual Deploy latest commit on Render after fixing DATABASE_URL.")
+
     rev = body.get("migration_revision")
+    missing = body.get("schema_tables_missing") or []
+
     if rev is None:
         print("FAIL: alembic_version missing — run: python scripts/gate_a_migrate.py")
         ok = False
     elif rev != EXPECTED_REVISION:
-        print(f"FAIL: migration at {rev!r}, expected {EXPECTED_REVISION}")
-        print("  Fix: python scripts/gate_a_migrate.py  (with Neon DATABASE_URL)")
+        _safe_print(f"FAIL: production DB revision {rev!r}, expected {EXPECTED_REVISION}")
+        local_host = _local_db_host_hint()
+        if local_host:
+            _safe_print(f"  Your migrated db_host: {local_host}")
+            _safe_print("  Set Render DATABASE_URL to that exact Neon URL -> Save -> Manual Deploy.")
         ok = False
     else:
         print(f"OK: migration revision {rev}")
 
-    missing = body.get("schema_tables_missing") or []
     if missing:
         print(f"FAIL: missing tables: {missing}")
         ok = False
@@ -102,13 +163,16 @@ def check_health(api: str) -> bool:
         present = body.get("schema_tables_present") or []
         print(f"OK: all required tables present ({len(present)})")
 
-    if body.get("migration_ok") and body.get("schema_ok"):
+    schema_ok = not missing and rev == EXPECTED_REVISION
+    if schema_ok:
         print("OK: A1 schema gate passed")
+        return True
+
     return ok
 
 
 def run_full_smoke(api: str) -> bool:
-    print("\n=== A2–A4 — Production smoke (signup → note → bearer → delete) ===")
+    _safe_print("\n=== A2-A4 - Production smoke (signup -> note -> bearer -> delete) ===")
     tag = uuid.uuid4().hex[:8]
     email = f"gate-a-{tag}@example.com"
     password = "GateATest123!"
@@ -197,7 +261,7 @@ def main() -> int:
         _VERIFY_SSL = False
     api = args.api.rstrip("/")
 
-    print(f"InfoCord Gate A verify — {api}")
+    _safe_print(f"InfoCord Gate A verify - {api}")
     print(f"Time: {time.strftime('%Y-%m-%d %H:%M:%S UTC', time.gmtime())}")
 
     health_ok = check_health(api)

@@ -18,6 +18,7 @@ depends_on = None
 
 
 def upgrade():
+    # auth_tokens: stores HMAC-SHA256(token, FLASK_SECRET_KEY) — never plaintext tokens
     if not table_exists("auth_tokens"):
         op.create_table(
             "auth_tokens",

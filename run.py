@@ -3,6 +3,7 @@ import os
 import re
 import uuid
 import hashlib
+import hmac
 from datetime import datetime, timedelta
 from functools import wraps
 import secrets
@@ -36,7 +37,7 @@ LOCKOUT_DURATION_MINUTES  = 15
 TOKEN_EXPIRY_DAYS         = 7
 
 # Alembic head — keep in sync with migrations/versions/ (Gate A health check)
-EXPECTED_MIGRATION_REVISION = "d7e3f2a1b8c4"
+EXPECTED_MIGRATION_REVISION = "e8f4a1b2c3d5"
 REQUIRED_SCHEMA_TABLES = (
     "users",
     "categories",
@@ -72,6 +73,21 @@ def normalize_db_url(url: str) -> str:
     if url and url.startswith("postgresql://"):
         return url.replace("postgresql://", "postgresql+psycopg2://", 1)
     return url
+
+
+def _db_host_hint() -> str | None:
+    """Non-secret host/db identifier so Gate A can confirm the same DB was migrated."""
+    raw = os.getenv("DATABASE_URL") or app.config.get("SQLALCHEMY_DATABASE_URI") or ""
+    if not raw:
+        return None
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(raw.replace("postgresql+psycopg2://", "postgresql://", 1))
+        host = parsed.hostname or ""
+        dbname = (parsed.path or "").lstrip("/").split("?")[0] or ""
+        return f"{host}/{dbname}" if host else None
+    except Exception:
+        return None
 
 
 app.config['SQLALCHEMY_DATABASE_URI'] = (
@@ -130,7 +146,11 @@ migrate.init_app(app, db)
 
 
 def _hash_token(raw_token: str) -> str:
-    return hashlib.sha256(raw_token.encode()).hexdigest()
+    """HMAC-SHA256 with server secret — raw tokens are never stored in PostgreSQL."""
+    secret = (app.config.get("SECRET_KEY") or FLASK_SECRET_KEY or "").encode("utf-8")
+    if not secret:
+        raise RuntimeError("FLASK_SECRET_KEY is required for auth token hashing")
+    return hmac.new(secret, raw_token.encode("utf-8"), hashlib.sha256).hexdigest()
 
 
 def create_auth_token(user_id) -> str:
@@ -494,6 +514,7 @@ def _probe_schema() -> dict:
         db.session.rollback()
 
     return {
+        "db_host": _db_host_hint(),
         "migration_revision": migration_revision,
         "migration_expected": EXPECTED_MIGRATION_REVISION,
         "migration_ok": migration_ok,
@@ -1207,11 +1228,12 @@ class NoteLink(db.Model):
 
 
 class AuthToken(db.Model):
+    """Bearer tokens: only HMAC-SHA256 hashes persisted; plaintext exists client-side only."""
     __tablename__ = 'auth_tokens'
 
-    token_hash = db.Column(db.String(64), primary_key=True)
-    user_id    = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    expires_at = db.Column(db.DateTime, nullable=False)
+    token_hash = db.Column(db.String(64), primary_key=True)  # HMAC-SHA256 hex digest
+    user_id    = db.Column(UUID(as_uuid=True), db.ForeignKey('users.id', ondelete='CASCADE'), nullable=False, index=True)
+    expires_at = db.Column(db.DateTime, nullable=False, index=True)
     created_at = db.Column(db.DateTime, default=datetime.now)
 
 

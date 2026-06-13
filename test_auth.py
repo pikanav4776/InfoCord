@@ -219,7 +219,7 @@ class TestHealth:
     def test_health_includes_gate_a_schema_fields(self, client):
         res = client.get("/health")
         body = res.get_json()
-        assert body["migration_expected"] == "d7e3f2a1b8c4"
+        assert body["migration_expected"] == "e8f4a1b2c3d5"
         assert "schema_tables_present" in body
         assert "schema_tables_missing" in body
         assert "migration_ok" in body
@@ -235,13 +235,13 @@ class TestHealth:
             ))
             db.session.execute(db.text("DELETE FROM alembic_version"))
             db.session.execute(db.text(
-                "INSERT INTO alembic_version (version_num) VALUES ('d7e3f2a1b8c4')"
+                "INSERT INTO alembic_version (version_num) VALUES ('e8f4a1b2c3d5')"
             ))
             db.session.commit()
         res = client.get("/health")
         body = res.get_json()
         assert body["migration_ok"] is True
-        assert body["migration_revision"] == "d7e3f2a1b8c4"
+        assert body["migration_revision"] == "e8f4a1b2c3d5"
 
 
 # ─────────────────────────────────────────────
@@ -1559,6 +1559,25 @@ class TestAccountDeletion:
 
 
 class TestDbBackedTokens:
+    def test_auth_token_stored_as_hmac_hash_not_plaintext(self, client):
+        """Raw bearer tokens must never be persisted — only HMAC-SHA256 digests."""
+        from run import AuthToken, app
+
+        client.post("/auth/signup", json={
+            "email": "hash@example.com", "password": "password123", "name": "Hash User"
+        })
+        res = client.post("/auth/login", json={
+            "email": "hash@example.com", "password": "password123"
+        })
+        raw_token = res.get_json()["token"]
+
+        with app.app_context():
+            rows = AuthToken.query.all()
+            assert len(rows) == 1
+            assert rows[0].token_hash != raw_token
+            assert len(rows[0].token_hash) == 64
+            assert all(c in "0123456789abcdef" for c in rows[0].token_hash)
+
     def test_login_returns_bearer_token(self, client):
         client.post("/auth/signup", json={
             "email": "token@example.com", "password": "password123", "name": "Token User"
