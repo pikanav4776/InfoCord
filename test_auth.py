@@ -21,7 +21,7 @@ Architecture note:
 
 Environment:
   Self-contained — sets all required env vars before any import.
-  Default: SQLite in-memory locally; CI sets TEST_DATABASE_URI for Postgres.
+  Uses SQLite in-memory; no Postgres needed.
   Run with:  pytest test_auth.py -v
 """
 
@@ -36,7 +36,7 @@ os.environ.setdefault("NOTE_ENCRYPTION_KEY", TEST_KEY)
 os.environ.setdefault("TEST_DATABASE_URI",   "sqlite:///:memory:")
 os.environ.setdefault("FLASK_SECRET_KEY",    "test-only-secret")
 
-from run import app, db, normalize_db_url                       # noqa: E402
+from run import app, db                                       # noqa: E402
 from crypto_utils import encrypt_note, decrypt_note, generate_iv  # noqa: E402
 
 
@@ -44,22 +44,11 @@ from crypto_utils import encrypt_note, decrypt_note, generate_iv  # noqa: E402
 # FIXTURES
 # ─────────────────────────────────────────────
 
-def _test_db_uri() -> str:
-    raw = (
-        os.environ.get("TEST_DATABASE_URI")
-        or os.environ.get("DATABASE_URL")
-        or "sqlite:///:memory:"
-    )
-    if raw.startswith(("postgresql://", "postgres://")):
-        return normalize_db_url(raw)
-    return raw
-
-
 @pytest.fixture
 def client():
-    """Fresh DB for every test (SQLite in-memory locally, Postgres in CI)."""
+    """Fresh in-memory SQLite DB for every test."""
     app.config["TESTING"]                 = True
-    app.config["SQLALCHEMY_DATABASE_URI"] = _test_db_uri()
+    app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///:memory:"
     app.config["WTF_CSRF_ENABLED"]        = False
     app.config["SECRET_KEY"]              = "test-only-secret"
 

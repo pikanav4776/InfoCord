@@ -6,7 +6,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 class CryptoAuthService {
   final String baseUrl;
   final _secureStorage = const FlutterSecureStorage();
-  final _aesAlgorithm = AesGcm.with256bits();
+  final _aesAlgorithm = AesGcm.with256Bits();
   
   CryptoAuthService({required this.baseUrl});
 

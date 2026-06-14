@@ -227,19 +227,16 @@ InfoCord/
 
 - Python 3.10+
 - PostgreSQL (local or Neon)
-- A `.env` file in the project root (copy from [`.env.example`](.env.example)):
+- A `.env` file in the project root:
 
 ```env
 FLASK_SECRET_KEY=your-secret-key
 DATABASE_URL=postgresql://user:password@localhost:port_number/infocord_mvp
 DB_PORT=port_number
-DB_USERNAME=your_user
-DB_PASSWORD=your_password
+DB_username=your_user
+DB_password=your_password
 FLASK_ENV=development
-NOTE_ENCRYPTION_KEY=your-base64-32-byte-key
 ```
-
-**Never commit `.env`.** If credentials were ever committed to git, rotate `FLASK_SECRET_KEY`, `NOTE_ENCRYPTION_KEY`, and your database password, then update the same values in Render → **infocord** → **Environment** (and your local `.env`). Removing `.env` from the repo does not erase past git history.
 
 ### Install and run locally
 
@@ -259,7 +256,7 @@ Open the app at **http://127.0.0.1:5000/app**.
 pytest test_auth.py -v
 ```
 
-Tests use an in-memory SQLite database by default. GitHub Actions CI runs the same suite against PostgreSQL (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+Tests use an in-memory SQLite database and do not require PostgreSQL.
 
 ---
 

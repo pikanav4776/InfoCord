@@ -3,12 +3,7 @@ Flask-SQLAlchemy
 Flask-Migrate
 psycopg2-binary
 Flask-Limiter
-flask-cors
 python-dotenv
 cryptography
 gunicorn
 Werkzeug
-pytest
-pytest-timeout
-
-# Mobile (Flutter SDK >=3.3.0) — see mobile/pubspec.yaml, not pip
