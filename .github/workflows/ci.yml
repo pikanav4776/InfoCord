@@ -27,6 +27,7 @@ jobs:
     env:
       TEST_DATABASE_URI: postgresql+psycopg2://postgres:postgres@localhost:5432/infocord_test
       FLASK_SECRET_KEY: ci-test-secret-key
+      NOTE_ENCRYPTION_KEY: dGVzdC1jaS1lbmNyeXB0aW9uLWtleS0zMmJ5dGVzIQ==
       FLASK_ENV: testing
 
     steps:
