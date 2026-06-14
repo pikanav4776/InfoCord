@@ -8,7 +8,7 @@ import '../config/app_config.dart';
 
 /// Client-side encryption — aligned with web Web Crypto API (AES-GCM tag appended to ciphertext).
 class CryptoService {
-  final _aes = AesGcm.with256Bits();
+  final _aes = AesGcm.with256bits();
   static const int _gcmTagLength = 16;
 
   Future<SecretKey> deriveMasterKey(String password) async {

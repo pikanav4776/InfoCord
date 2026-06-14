@@ -25,7 +25,14 @@ Flutter client for InfoCord — matches the web app's E2EE model (PBKDF2 310k + 
 
 ### B1 — First-time setup (required)
 
-Flutter is not in this repo until you run:
+Install the [Flutter SDK](https://docs.flutter.dev/get-started/install/windows/mobile) and add `C:\src\flutter\bin` to your **User** PATH. Restart Cursor after changing PATH.
+
+If `flutter` is not recognized in a terminal, either open a **new** terminal tab or run:
+
+```powershell
+..\scripts\flutter.ps1 --version
+..\scripts\flutter.ps1 test
+```
 
 ```bash
 cd mobile

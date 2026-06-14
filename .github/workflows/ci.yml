@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: infocord_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      TEST_DATABASE_URI: postgresql+psycopg2://postgres:postgres@localhost:5432/infocord_test
+      FLASK_SECRET_KEY: ci-test-secret-key
+      NOTE_ENCRYPTION_KEY: dGVzdC1jaS1lbmNyeXB0aW9uLWtleS0zMmJ5dGVzIQ==
+      FLASK_ENV: testing
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run backend tests
+        run: pytest test_auth.py -v
+
+  mobile:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: "3.29.0"
+
+      - name: Install Flutter dependencies
+        working-directory: mobile
+        run: flutter pub get
+
+      - name: Run Flutter tests
+        working-directory: mobile
+        run: flutter test
