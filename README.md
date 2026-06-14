@@ -255,11 +255,49 @@ Open the app at **http://127.0.0.1:5000/app**.
 
 ### Run tests
 
+**Backend (local — SQLite by default):**
+
 ```bash
 pytest test_auth.py -v
 ```
 
-Tests use an in-memory SQLite database by default. GitHub Actions CI runs the same suite against PostgreSQL (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+**Backend (optional — Postgres, mimics CI):**
+
+```bash
+# set TEST_DATABASE_URI to your local Postgres URL first
+pytest test_auth.py -v
+```
+
+**Mobile:**
+
+```bash
+cd mobile
+flutter pub get
+flutter test
+```
+
+GitHub Actions CI runs backend tests against ephemeral Postgres and mobile tests on every push/PR to `main` (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+
+---
+
+## CI/CD
+
+| Layer | Tool | Trigger | What runs |
+|-------|------|---------|-----------|
+| **CI** | GitHub Actions | Push or PR to `main` | `pytest test_auth.py` on Postgres 16; `flutter test` in `mobile/` |
+| **CD** | Render | Push to `main` (auto-deploy) | `pip install`, `flask db upgrade`, `gunicorn run:app` per [`render.yaml`](render.yaml) |
+
+### Verify CI passed
+
+1. Push or open a PR to `main`.
+2. GitHub → **Actions** → **CI** → confirm **backend** and **mobile** jobs are green.
+
+### Verify deploy succeeded
+
+1. After merge to `main`, open Render → **infocord** → wait for **Live**.
+2. `GET https://infocord.onrender.com/health` → `"status": "ok"`, `"db": "ok"`.
+
+Secrets (`DATABASE_URL`, `FLASK_SECRET_KEY`, `NOTE_ENCRYPTION_KEY`) belong in Render Environment and local `.env` only — copy from [`.env.example`](.env.example).
 
 ---
 
@@ -358,12 +396,14 @@ This checklist tracks what is needed to move InfoCord from a working **web MVP**
 | Dependencies managed | Yes — Neon, Render documented | **Agree** | `DATABASE_URL`, Render deployment, CORS origins documented; `requirements.txt` pinned |
 | Security baseline | Auth, authz, lockout verified | **Mostly agree — with caveats** | `@require_login` + per-user row checks; 5 failed logins → 15-min lockout (`MAX_FAILED_ATTEMPTS`, `LOCKOUT_DURATION_MINUTES`); rate limiting **enabled only in production** (`FLASK_ENV=production`). Password hashing uses Werkzeug (**PBKDF2-SHA256** by default, not bcrypt). Note content is E2EE; **email and display name are plaintext PII** on server |
 | Testing coverage | “Still have to add that” | **Incorrect — partially done** | **`test_auth.py` has 100 API/unit tests** covering auth, E2EE payloads, version sync, recovery, validation. **Missing:** browser E2E tests (Playwright/Cypress), load tests, and mobile client tests |
-| CI/CD pipeline | To be considered | **Not started** | No `.github/workflows/` or other automated build/test/deploy pipeline in repo |
+| CI/CD pipeline | To be considered | **Partial — CI done** | GitHub Actions runs backend + mobile tests on push/PR to `main`. Render handles deploy on merge; no automated post-deploy smoke in CI yet. |
 
 **Remaining steps**
 - [ ] Move Bearer tokens and rate-limit state to Redis or DB (required before multi-worker production)
 - [ ] Split `run.py` into modules (`models.py`, `routes/`, `auth.py`) when team or complexity grows
-- [ ] Add GitHub Actions (or similar): lint → `pytest` → deploy on merge
+- [x] Add GitHub Actions: `pytest` + `flutter test` on push/PR to `main`
+- [ ] Add branch protection requiring CI checks before merge
+- [ ] Add post-deploy `/health` smoke or external uptime monitoring
 - [ ] Add E2E tests for login → create note → encrypt → sync flow in browser
 - [ ] Load-test auth and note endpoints; document expected capacity on Render free/starter tiers
 - [ ] Remove unused dependencies (`openai`) or document why they are kept
