@@ -20,12 +20,22 @@ from dotenv import load_dotenv
 from flask_cors import CORS
 
 
-load_dotenv() 
+load_dotenv()
 
-# authentication information
+
+def _env_first(*names: str) -> str | None:
+    """Return the first non-empty env var among aliases (modern + legacy names)."""
+    for name in names:
+        val = os.getenv(name)
+        if val:
+            return val
+    return None
+
+
+# authentication information (accept DB_USERNAME/DB_PASSWORD or legacy DB_username/DB_password)
 DB_PORT          = os.getenv("DB_PORT")
-DB_username      = os.getenv("DB_username")
-DB_password      = os.getenv("DB_password")
+DB_username      = _env_first("DB_USERNAME", "DB_username")
+DB_password      = _env_first("DB_PASSWORD", "DB_password")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
 
 
