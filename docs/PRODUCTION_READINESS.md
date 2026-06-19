@@ -1,9 +1,15 @@
 # Production Readiness
 
 **Audience:** PM / future you  
-**Related:** [Deployment](DEPLOYMENT.md) · [CI/CD](CI.md) · [Mobile (Gate B)](../mobile/README.md) · [Store listing](../store/listing.md)
+**Related:** [Deployment](DEPLOYMENT.md) · [CI/CD](CI.md) · [Mobile (Gate B)](../mobile/README.md) · [Store package (deferred)](../store/README.md)
 
-This document tracks what is needed to move InfoCord from a working **web MVP** to a **maintained commercial product** and eventually a **mobile app on Apple App Store / Google Play**. Status reflects the repository as of June 2026.
+This document tracks what is needed to maintain InfoCord as an **open GitHub project** with a **hosted web MVP** at `https://infocord.onrender.com`. Status reflects the repository as of June 2026.
+
+---
+
+## Distribution decision
+
+**Current focus (June 2026):** Publicize the InfoCord GitHub repository and the hosted web app. Formal App Store / Google Play submission is **not planned right now**. The Flutter client and `store/` assets remain **store-ready reference material** — if a native store release becomes necessary later, that will be decided and documented at that time.
 
 ---
 
@@ -13,7 +19,7 @@ This document tracks what is needed to move InfoCord from a working **web MVP** 
 |-----------|----------------|
 | **MVP (Phases 0–6)** | **Complete** — E2EE note storage, auth, CRUD, version sync, stability, tests |
 | **MVP Phase 7 (deployment)** | **Complete** — Render-hosted API with production hardening |
-| **Post-MVP** | **Partial** — recovery keys and password change done; mobile client code complete (device/store verification pending); offline, encrypted search, and AI remain future work |
+| **Post-MVP** | **Partial** — recovery keys and password change done; mobile client code complete (device verification pending; store submission not planned); offline, encrypted search, and AI remain future work |
 
 ---
 
@@ -39,7 +45,7 @@ This document tracks what is needed to move InfoCord from a working **web MVP** 
 | Objective | Met? | Notes |
 |-----------|------|-------|
 | Offline support (IndexedDB + sync queue) | **No** | All CRUD requires network |
-| Mobile apps (Flutter, Android/iOS) | **Partial** | Code complete in `mobile/`; device testing and store submission pending |
+| Mobile apps (Flutter, Android/iOS) | **Partial** | Code complete in `mobile/`; device verification pending; store submission not planned |
 | Secure key storage (Keychain/Keystore) | **Partial** | Implemented in `mobile/lib/services/secure_key_store.dart`; device verification pending |
 | Recovery mechanisms | **Yes (web)** | Signup recovery key, `/auth/recover`, `/auth/recovery-key`, settings UI |
 | Password change without data loss | **Yes** | `/auth/change-password` + client-side re-encryption batch |
@@ -64,12 +70,12 @@ Each note has a `version` integer. When you save, the client sends the version i
 
 **Recommended roadmap:**
 
-1. **Pre–App Store (online-only):** On 409, show conflict modal — **Keep My Version** or **Use Server Version**. Implemented in `templates/index.html`.
-2. **Post–App Store + offline:** When Wi‑Fi returns, detect conflicts, show all conflicting versions, user picks one. Requires IndexedDB sync queue (post-MVP).
+1. **Web, online-only (current):** On 409, show conflict modal — **Keep My Version** or **Use Server Version**. Implemented in `templates/index.html`.
+2. **Future mobile offline sync:** When Wi‑Fi returns, detect conflicts, show all conflicting versions, user picks one. Requires IndexedDB sync queue (post-MVP).
 
 ---
 
-## App Store & production readiness checklist
+## Production readiness checklist
 
 ### 1. Business readiness
 
@@ -83,7 +89,7 @@ Each note has a `version` integer. When you save, the client sends the version i
 
 **Remaining steps:**
 - [ ] Write a one-page product brief (see [outline below](#product-brief--outline))
-- [ ] Define monetization (free tier, subscription, one-time purchase)
+- [ ] Define monetization (free tier, subscription, one-time purchase) — optional for open-source GitHub release
 - [ ] Document long-term maintainer commitment and decision authority
 
 ### 2. Technical readiness
@@ -130,50 +136,54 @@ Each note has a `version` integer. When you save, the client sends the version i
 | Item | Verified status | Notes |
 |------|-----------------|-------|
 | Configuration over hardcoding | **Agree** | `FLASK_SECRET_KEY`, `DATABASE_URL`, `FLASK_ENV`, etc. |
-| UI / API consistency | **Agree** | Web at `GET /app`; Flutter UI in `mobile/` — not yet published on stores |
+| UI / API consistency | **Agree** | Web at `GET /app`; Flutter UI in `mobile/` — distributed via GitHub repo, not app stores |
 
-**Remaining steps (web → app store):**
+**Active (web + repo):**
 - [x] Flutter mobile app scaffold in `mobile/`
 - [x] Align mobile PBKDF2 iterations with web (310,000)
-- [x] App icons, splash screens, store screenshots guide, listing copy (`store/`)
-- [ ] Apple Developer Program + Google Play Console accounts (`store/accounts.md`)
 - [x] Privacy policy URL at `/legal/privacy`
 - [x] Terms of service at `/legal/terms`
 - [x] Account deletion (`DELETE /auth/account` + Settings UI on web and mobile)
 
-### Summary: what is left before App Store launch
+**Deferred — store path (not pursuing now):**
+- [x] App icons, splash screens, store screenshots guide, listing copy (`store/`) — preserved as reference
+- [ ] Apple Developer Program + Google Play Console accounts (`store/accounts.md`)
+- [ ] Store console submission, age APIs, store-specific screenshots
 
-| Priority | Category | Key blockers |
-|----------|----------|--------------|
-| **P0 — Must have** | Mobile product | Flutter scaffold in `mobile/` — still needs `flutter create`, device testing, store assets |
-| **P0 — Must have** | Store requirements | Privacy + terms live; account deletion done; **icons + listing copy done** — screenshots + dev accounts still needed |
+### Summary: active vs deferred work
+
+| Priority | Category | Key items |
+|----------|----------|-----------|
+| **P0 — Must have** | GitHub / web product | Public repo quality: CI green, docs accurate, hosted web MVP stable |
 | **P0 — Must have** | Production stability | **Done** — Bearer tokens + rate limits in PostgreSQL |
-| **P1 — Should have** | Compliance | Privacy policy content, DPDPA (India) + CCPA (US) basics, age APIs for US mobile |
+| **P1 — Should have** | Compliance (web) | Privacy policy content, DPDPA (India) + CCPA (US) basics |
 | **P1 — Should have** | Operations | Monitoring, error tracking, incident runbook, backup restore test |
 | **P1 — Should have** | CI/CD | Automated tests on every push **done** — branch protection and post-deploy smoke remain |
 | **P2 — Nice to have** | MVP polish | Offline sync queue; encrypted search |
 | **P2 — Nice to have** | Business | Monetization model, formal product brief |
+| **Deferred — not pursuing now** | Mobile device QA | `flutter create`, on-device testing in `mobile/` |
+| **Deferred — not pursuing now** | Store submission | Dev accounts, store consoles, age APIs, submission screenshots — see [Gate C (deferred)](#gate-c--store-submission-package-deferred) |
 
 ---
 
-## Gate C — Store submission package
+## Gate C — Store submission package (deferred)
 
-**Status:** Automated assets complete — manual console setup and device screenshots remain.
+**Status:** Automated assets complete and preserved for future use. Manual console setup and store submission are **not scheduled** — see [Distribution decision](#distribution-decision).
 
 | Step | What | Status |
 |------|------|--------|
-| **C1** | Apple Developer + Google Play accounts | Manual — [`store/accounts.md`](../store/accounts.md) |
-| **C2** | App icon 1024×1024 + Android adaptive icon | `python images/icon_generation.py` → `mobile/assets/icons/` + `static/icons/` |
-| **C3** | Splash screen | `flutter_native_splash` in `mobile/pubspec.yaml`; in-app splash in `main.dart` |
-| **C4** | Store screenshots (phone sizes) | Capture guide — [`store/screenshots/README.md`](../store/screenshots/README.md) |
-| **C5** | Short + long description, keywords, age rating | [`store/listing.md`](../store/listing.md) |
-| **C6** | Privacy policy URL | https://infocord.onrender.com/legal/privacy |
+| **C1** | Apple Developer + Google Play accounts | Deferred — [`store/accounts.md`](../store/accounts.md) |
+| **C2** | App icon 1024×1024 + Android adaptive icon | Done — `python images/icon_generation.py` → `mobile/assets/icons/` + `static/icons/` |
+| **C3** | Splash screen | Done — `flutter_native_splash` in `mobile/pubspec.yaml`; in-app splash in `main.dart` |
+| **C4** | Store screenshots (phone sizes) | Deferred — capture guide [`store/screenshots/README.md`](../store/screenshots/README.md) |
+| **C5** | Short + long description, keywords, age rating | Reference copy — [`store/listing.md`](../store/listing.md) |
+| **C6** | Privacy policy URL | Done — https://infocord.onrender.com/legal/privacy |
 
 ### Icon design
 
 Syne Bold **IC** in white on `#0e0f11`; minimalist eye (ring + pupil) atop the **I**. Web uses Syne via Google Fonts; mobile uses `google_fonts` package.
 
-### Verify Gate C assets
+### Verify Gate C assets (optional — future store path)
 
 ```powershell
 cd c:\InfoCord
@@ -196,17 +206,19 @@ dart run flutter_native_splash:create
 
 | Item | Verified status | Notes |
 |------|-----------------|-------|
-| Compliance (GDPR, SOC2, HIPAA) | **Partial — needs expansion** | **US:** CCPA/CPRA, COPPA, and **2026 App Store Accountability laws** (TX, UT, LA, etc.) require age signals and parental consent APIs. **India:** DPDPA (2023) applies to Indian users' data. **SOC2/HIPAA:** out of scope unless targeting healthcare/enterprise |
+| Compliance (GDPR, SOC2, HIPAA) | **Partial — needs expansion** | **US:** CCPA/CPRA, COPPA basics for web users. **India:** DPDPA (2023) applies to Indian users' data. **SOC2/HIPAA:** out of scope unless targeting healthcare/enterprise |
 | Data sensitivity (PII, encryption, access control) | **Partial** | Note **content** is E2EE. Server still holds **email, name, session metadata** |
 | Licensing / IP | **Not started** | No LICENSE file, third-party attribution, or trademark check on "InfoCord" |
 | Vendor lock-in | **Partial** | No proprietary APIs, but **Render + Neon** are operational dependencies |
 
-**Remaining steps:**
+**Active remaining steps:**
 - [x] Publish privacy policy at `/legal/privacy`
 - [x] Implement account + data deletion (`DELETE /auth/account`)
-- [ ] Add age-rating and parental-consent handling when shipping mobile (Apple Declared Age Range API; Google Play Age Signals API)
 - [ ] Add `LICENSE` and `THIRD_PARTY_NOTICES` for dependencies
 - [ ] Document data-processing agreements with Neon and Render
+
+**Required only if pursuing store release (deferred):**
+- [ ] Age-rating and parental-consent handling (Apple Declared Age Range API; Google Play Age Signals API; 2026 App Store Accountability laws in TX, UT, LA, etc.)
 
 ---
 
@@ -227,7 +239,7 @@ A one-page product brief is best written by you. Use this outline:
    | Obsidian | Local-first markdown; InfoCord is sync-first encrypted cloud |
 
 6. **Business model** — TBD (free tier / subscription / one-time)
-7. **Roadmap** — Mobile → offline sync → RAG/AI (privacy-preserving)
+7. **Roadmap** — GitHub public release → mobile device QA → offline sync → RAG/AI (privacy-preserving); store release only if needed
 8. **Maintainer** — Who owns long-term decisions (TBD)
 
 ---
@@ -244,4 +256,5 @@ A one-page product brief is best written by you. Use this outline:
 - [DEPLOYMENT.md](DEPLOYMENT.md) — Gate A, Neon, `/health`
 - [CI.md](CI.md) — GitHub Actions, local tests
 - [mobile/README.md](../mobile/README.md) — Gate B mobile checklist
-- [store/listing.md](../store/listing.md) — App Store copy and metadata
+- [store/README.md](../store/README.md) — Deferred store submission package index
+- [store/listing.md](../store/listing.md) — Store listing copy (deferred reference)

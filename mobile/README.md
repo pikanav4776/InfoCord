@@ -2,7 +2,7 @@
 
 Flutter client for InfoCord — matches the web app's E2EE model (PBKDF2 310k + AES-GCM).
 
-**Related:** [Main README](../README.md) · [Deployment / Gate A](../docs/DEPLOYMENT.md) · [CI](../docs/CI.md) · [Production readiness / Gate C](../docs/PRODUCTION_READINESS.md)
+**Related:** [Main README](../README.md) · [Deployment / Gate A](../docs/DEPLOYMENT.md) · [CI](../docs/CI.md) · [Production readiness / Gate C (deferred)](../docs/PRODUCTION_READINESS.md#gate-c--store-submission-package-deferred)
 
 > **Prerequisite:** Gate A (backend) must pass before closing Gate B on a real emulator or phone. See [docs/DEPLOYMENT.md](../docs/DEPLOYMENT.md).
 
@@ -141,16 +141,21 @@ Implementation: `secure_key_store.dart` + `auth_provider.dart`.
 
 ---
 
-## App Store checklist (mobile-specific)
+## Mobile polish and deferred store readiness
 
+**Store submission is not planned right now.** The items below keep the client store-ready if a native release is approved later.
+
+**Done (good practice / store-ready if needed later):**
 - [x] App icon in `assets/icons/` (1024×1024 + adaptive foreground/background)
 - [x] Splash screen config (`flutter_native_splash` + in-app bootstrap)
 - [x] Privacy + Terms links in app (open browser)
 - [x] Account deletion in Settings
-- [ ] Device screenshots in `../store/screenshots/`
+
+**Deferred — not planned for store release:**
+- [ ] Device screenshots in `../store/screenshots/` (store submission sizes)
 - [ ] Physical device test (secure storage)
 - [ ] Apple / Google developer accounts (`../store/accounts.md`)
-- [ ] Apple / Google age APIs when shipping stores
+- [ ] Apple / Google age APIs when shipping to app stores
 
-Store submission assets (Gate C), compliance, and production readiness: **[docs/PRODUCTION_READINESS.md](../docs/PRODUCTION_READINESS.md)**  
-Listing copy: **[store/listing.md](../store/listing.md)**
+Deferred store package (Gate C) and production readiness: **[docs/PRODUCTION_READINESS.md](../docs/PRODUCTION_READINESS.md)**  
+Store listing reference copy: **[store/listing.md](../store/listing.md)** · Index: **[store/README.md](../store/README.md)**

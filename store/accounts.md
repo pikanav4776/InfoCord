@@ -1,6 +1,8 @@
 # Developer accounts (Gate C1)
 
-Register and complete enrollment **before** first store submission.
+> **Deferred reference.** Do not enroll developer accounts until a store release is explicitly approved. Current focus is GitHub repo publicization and the hosted web app.
+
+Register and complete enrollment **only when** pursuing a future store submission.
 
 ## Apple Developer Program
 

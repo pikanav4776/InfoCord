@@ -1,5 +1,7 @@
 # Store screenshots (Gate C4)
 
+> **Deferred reference.** Screenshots at store-specific sizes are optional for repo/marketing; they are only required for a future App Store / Play submission.
+
 Capture from a **physical device or emulator** after `flutter run` (mobile) or browser at `/app` (web marketing optional). Place finished PNGs in this folder using the names below.
 
 ## Required sizes

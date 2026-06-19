@@ -1,6 +1,8 @@
 # InfoCord — Store listing copy (Gate C5)
 
-Use these in **App Store Connect** and **Google Play Console**. Privacy policy URL (C6): **https://infocord.onrender.com/legal/privacy**
+> **Deferred reference.** Do not submit to App Store Connect or Google Play Console unless a store release is explicitly approved. Current focus is GitHub repo publicization and the hosted web app.
+
+Use these in **App Store Connect** and **Google Play Console** only if pursuing a future store release. Privacy policy URL (C6): **https://infocord.onrender.com/legal/privacy**
 
 ---
 

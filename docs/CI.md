@@ -7,6 +7,8 @@
 
 ## Pipeline overview
 
+CI validates backend and mobile code quality for the public GitHub repository — it is not a store-submission gate.
+
 | Layer | Tool | Trigger | What runs |
 |-------|------|---------|-----------|
 | **CI** | GitHub Actions | Push or PR to `main` | `pytest test_auth.py` on Postgres 16; `flutter test` in `mobile/` |

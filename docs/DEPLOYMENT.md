@@ -152,5 +152,5 @@ Both must print **`GATE A: PASSED`**. On Windows add `--insecure` if TLS verific
 ## See also
 
 - [CI.md](CI.md) — automated tests and deploy verification
-- [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) — Gate C store assets, monitoring gaps, compliance
+- [PRODUCTION_READINESS.md](PRODUCTION_READINESS.md) — deferred store assets (Gate C), monitoring gaps, compliance
 - [mobile/README.md](../mobile/README.md) — Gate B mobile client (requires Gate A pass first)

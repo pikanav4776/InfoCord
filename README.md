@@ -27,6 +27,12 @@ InfoCord is a web-based note organization system with a **Flutter mobile client 
 
 ---
 
+## Distribution
+
+**Current focus (June 2026):** Publicize the InfoCord GitHub repository and the hosted web app at `https://infocord.onrender.com`. Formal App Store / Google Play submission is **not planned right now**. The Flutter client and `store/` assets remain **store-ready reference material** — if a native store release becomes necessary later, that will be decided and documented at that time.
+
+---
+
 ## Tech Stack
 
 | Layer | Choice |
@@ -34,7 +40,7 @@ InfoCord is a web-based note organization system with a **Flutter mobile client 
 | **Backend** | Flask (Python) — single-app layout in `run.py` (~1,300 lines) |
 | **Database** | PostgreSQL (Neon for deployment) |
 | **Frontend** | HTML / CSS / JavaScript with Web Crypto API (AES-GCM + PBKDF2) |
-| **Mobile** | Flutter (Android/iOS) — code complete, device/store verification pending |
+| **Mobile** | Flutter (Android/iOS) — code complete, device verification pending; store submission not planned |
 | **Auth tokens** | HMAC digests in PostgreSQL `auth_tokens` |
 | **Rate limiting** | PostgreSQL `rate_limit_buckets` + `@db_rate_limit` |
 | **CI** | GitHub Actions — backend + mobile tests on push/PR to `main` |
@@ -60,7 +66,7 @@ InfoCord/
 ├── templates/index.html   # Web UI + client-side encryption
 ├── mobile/                # Flutter app — see mobile/README.md
 ├── scripts/               # Gate A/C verification and migration helpers
-├── store/                 # App Store listing copy, screenshots guide
+├── store/                 # Deferred store listing assets (reference only)
 ├── docs/                  # Deployment, CI, production readiness
 ├── test_auth.py           # Backend test suite (tentatively over 150 tests)
 ├── migrations/            # Alembic database migrations
@@ -122,7 +128,7 @@ All note write operations expect `{ ciphertext, iv, salt, ... }` — never plain
 |-----------|--------|
 | **MVP (Phases 0–6)** | **Complete** — E2EE note storage, auth, CRUD, version sync, stability, tests |
 | **Phase 7 (deployment)** | **Complete** — Render-hosted API with production hardening |
-| **Post-MVP** | **Partial** — recovery keys and password change done; mobile code complete (device/store verification pending); offline, encrypted search, and AI remain future work |
+| **Post-MVP** | **Partial** — recovery keys and password change done; mobile code complete (device verification pending; store submission not planned); offline, encrypted search, and AI remain future work |
 
 InfoCord today is a **working privacy-first web note app** with a zero-knowledge backend. The server stores encrypted blobs and metadata; the browser owns encryption, decryption, and search over decrypted content during an active session.
 
@@ -131,14 +137,14 @@ InfoCord today is a **working privacy-first web note app** with a zero-knowledge
 - `test_auth.py` — tentatively over 150 backend tests; 6 Flutter unit tests in `mobile/test/`
 - Bearer tokens stored as HMAC digests in PostgreSQL `auth_tokens` (multi-worker-safe)
 - Rate limits use PostgreSQL `rate_limit_buckets` via `@db_rate_limit` (not Flask-Limiter)
-- Mobile client in `mobile/` is **code complete** — device testing and store submission pending
+- Mobile client in `mobile/` is **code complete** — device verification pending; store submission not planned
 
 ### Post-MVP highlights
 
 | Concern | Status |
 |---------|--------|
 | Offline support (IndexedDB + sync queue) | Not started |
-| Mobile apps (Flutter) | In progress — code complete, device/store verification pending |
+| Mobile apps (Flutter) | In progress — code complete, device verification pending; store submission not planned |
 | Secure key storage (Keychain/Keystore) | In progress — implemented, device verification pending |
 | Recovery keys + password change | Done (web) |
 | Version conflict handling | Done (web); offline retry queue future work |
@@ -165,9 +171,10 @@ Because InfoCord uses end-to-end encryption:
 | **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** | You + ops | Render, Neon, env vars, `/health`, Gate A scripts |
 | **[docs/CI.md](docs/CI.md)** | Developers | GitHub Actions, local test commands, CI/CD verification |
 | **[mobile/README.md](mobile/README.md)** | Mobile dev | Gate B checklist — Flutter setup, E2EE parity, device verification |
-| **[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)** | PM / future you | App Store checklist, Gate C assets, compliance, risks, product brief outline |
-| **[store/listing.md](store/listing.md)** | Store submission | App Store copy, keywords, age rating |
-| **[store/accounts.md](store/accounts.md)** | Store submission | Apple / Google developer account setup |
-| **[store/screenshots/README.md](store/screenshots/README.md)** | Store submission | Screenshot capture guide |
+| **[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)** | PM / future you | Production readiness, compliance, deferred store path |
+| **[store/README.md](store/README.md)** | Future / reference | Deferred store submission package index |
+| **[store/listing.md](store/listing.md)** | Future / reference | App Store copy, keywords, age rating (deferred) |
+| **[store/accounts.md](store/accounts.md)** | Future / reference | Apple / Google developer account setup (deferred) |
+| **[store/screenshots/README.md](store/screenshots/README.md)** | Future / reference | Screenshot capture guide (deferred) |
 
 Development plan PDF and API call graph: `documentation/`
