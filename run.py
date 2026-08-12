@@ -33,7 +33,7 @@ def _env_first(*names: str) -> str | None:
 
 
 # authentication information (accept DB_USERNAME/DB_PASSWORD or legacy DB_username/DB_password)
-DB_PORT          = os.getenv("DB_PORT")
+DB_PORT          = os.getenv("DB_PORT") or "5433"
 DB_username      = _env_first("DB_USERNAME", "DB_username")
 DB_password      = _env_first("DB_PASSWORD", "DB_password")
 FLASK_SECRET_KEY = os.getenv("FLASK_SECRET_KEY")
@@ -131,11 +131,22 @@ def _db_host_hint() -> str | None:
         return None
 
 
-app.config['SQLALCHEMY_DATABASE_URI'] = (
-    os.getenv('TEST_DATABASE_URI') # when would this occur? when running tests
-    or normalize_db_url(DATABASE_URL) # when would this occur? # when running the app
-    or f'postgresql+psycopg2://{DB_username}:{DB_password}@localhost:{DB_PORT}/infocord_mvp' # when would this occur? # fallback to local database
-)
+def _resolve_sqlalchemy_database_uri() -> str:
+    test_uri = os.getenv('TEST_DATABASE_URI')
+    if test_uri:
+        return test_uri
+    normalized = normalize_db_url(DATABASE_URL)
+    if normalized:
+        return normalized
+    if not DB_username or not DB_password:
+        raise RuntimeError(
+            "DATABASE_URL is not set and DB_USERNAME/DB_PASSWORD are missing. "
+            "Copy .env.example to .env and configure your Postgres connection."
+        )
+    return f'postgresql+psycopg2://{DB_username}:{DB_password}@localhost:{DB_PORT}/infocord_mvp'
+
+
+app.config['SQLALCHEMY_DATABASE_URI'] = _resolve_sqlalchemy_database_uri()
 
 
 # ─────────────────────────────────────────────
@@ -499,14 +510,15 @@ def set_note_links(note: "Note", linked_ids: list, user: "User"):
 # ─────────────────────────────────────────────
 
 @app.route("/")
-def home():
-    return jsonify({"message": "InfoCord API running"})
-
 @app.route('/app')
 def frontend():
     with open('templates/index.html', 'r', encoding='utf-8') as f:
         content = f.read()
     return content, 200, {'Content-Type': 'text/html'}
+
+@app.route("/api")
+def api_status():
+    return jsonify({"message": "InfoCord API running"})
 
 
 @app.route("/static/<path:filename>")

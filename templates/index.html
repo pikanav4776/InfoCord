@@ -1446,7 +1446,7 @@ async function apiFetch(path, options = {}) {
     
     try {
         const headers = { 'Content-Type': 'application/json' };
-        if (authToken) headers['Authorization'] = `Bearer ${authToken}`;
+        if (authToken) headers['Authorization'] = `Bearer ${authToken}`; // checks user is logged in
         const res = await fetch(API + path, {
             credentials: 'include',
             headers,
@@ -1454,9 +1454,9 @@ async function apiFetch(path, options = {}) {
             ...options,
             // merge caller-supplied headers on top so they can still override
             headers: { ...headers, ...(options.headers || {}) },
-        });
+        }); // request to the backend
         clearTimeout(timeoutId);
-        const data = await res.json();
+        const data = await res.json(); // actually reads res(Response object containing metadata) but not stream. 
         return { ok: res.ok, status: res.status, data };
     } catch (err) {
         clearTimeout(timeoutId);

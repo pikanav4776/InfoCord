@@ -168,10 +168,10 @@ Because InfoCord uses end-to-end encryption:
 
 | Document | Audience | Contents |
 |----------|----------|----------|
-| **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** | You + ops | Render, Neon, env vars, `/health`, Gate A scripts |
+| **[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)** | Project Manager | Render, Neon, env vars, `/health`, Gate A scripts |
 | **[docs/CI.md](docs/CI.md)** | Developers | GitHub Actions, local test commands, CI/CD verification |
 | **[mobile/README.md](mobile/README.md)** | Mobile dev | Gate B checklist — Flutter setup, E2EE parity, device verification |
-| **[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)** | PM / future you | Production readiness, compliance, deferred store path |
+| **[docs/PRODUCTION_READINESS.md](docs/PRODUCTION_READINESS.md)** | Project Manager you | Production readiness, compliance, deferred store path |
 | **[store/README.md](store/README.md)** | Future / reference | Deferred store submission package index |
 | **[store/listing.md](store/listing.md)** | Future / reference | App Store copy, keywords, age rating (deferred) |
 | **[store/accounts.md](store/accounts.md)** | Future / reference | Apple / Google developer account setup (deferred) |
